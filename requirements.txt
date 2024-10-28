@@ -1,1 +1,14 @@
-
+streamlit
+os
+pandas
+matplotlib
+seaborn
+openai
+google-cloud-bigquery
+fpdf
+altair
+plotly
+numpy
+scikit-learn
+ijson
+streamlit-float
