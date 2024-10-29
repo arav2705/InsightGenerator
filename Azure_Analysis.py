@@ -1,9 +1,9 @@
 import streamlit as st
 import pandas as pd
 import tempfile
+import openai
 import matplotlib.pyplot as plt
 import seaborn as sns
-import openai
 from openai import AzureOpenAI
 from google.cloud import bigquery
 import os
@@ -20,13 +20,40 @@ import re
 import time
 import pathlib
 import json
-import ijson
 from streamlit_float import *
+import ijson
 st.set_page_config(
     page_title="Feedback & App Rating Dashboard",
     page_icon="🤖",
     layout="wide",
     initial_sidebar_state="collapsed",  
+)
+dataset_summary = (
+    "### Dataset Summary\n\n"
+    "**Columns:**\n"
+    "- **identity.hwid**: Unique hardware identifier for each device.\n"
+    "- **event_timestamp**: Timestamp of the event, converted to a human-readable format.\n"
+    "- **date_ymd**: Date of the event in YYYY-MM-DD format.\n"
+    "- **text_feedback**: User-provided feedback text.\n"
+    "- **score**: Numeric score associated with the feedback.\n"
+    "- **origin**: Source of the feedback (e.g., platform, device).\n"
+    "- **country**: Country where the feedback originated.\n"
+    "- **region**: Region within the country of the feedback origin.\n"
+    "- **city**: City where the feedback originated.\n"
+    "- **skup**: License group or type.\n"
+    "- **version_app**: Version of the application used.\n"
+    "- **version**: Operating System platform version.\n"
+    "- **architecture**: Architecture of the platform (e.g., x86, ARM).\n"
+    "- **type**: Type of license.\n"
+    "- **aiid**: Application installation ID.\n"
+    "- **psn**: Product serial number.\n"
+    "- **uninstall_text_feedback**: Feedback provided by the user during uninstallation, or 'None' if not available.\n"
+    "- **uninstall_feedback_value**: The value or reason selected by the user during the uninstallation process.\n\n"
+    "### Key Statistics and Patterns\n\n"
+    "- **Feedback Analysis**: The `text_feedback` and `uninstall_text_feedback` fields contain qualitative feedback for sentiment analysis and theme extraction, including uninstallation reasons.\n"
+    "- **Temporal Patterns**: Use `event_timestamp` and `date_ymd` to analyze trends over time, including feedback patterns before uninstallation.\n"
+    "- **Geographic Insights**: Analyze `country`, `region`, and `city` for location-based trends and potential correlations with uninstall feedback.\n"
+    "- **Product and License Metrics**: Evaluate `version_app`, `version`, `architecture`, and `type` for product usage, license management, and uninstallation patterns.\n\n"
 )
 st.markdown(
     """
@@ -80,7 +107,7 @@ st.markdown(
     footer {
         position: fixed;
         bottom: 0;
-        width: 88%;
+        width: 88.05%;
         background-color: #1b1b1b;  
         color: #ffffff;  
         text-align: center;
@@ -91,14 +118,16 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
 st.markdown(
     """
     <div class="logo-container">
-        <img src="https://1000logos.net/wp-content/uploads/2021/12/Norton-Logo.png" alt="Norton Logo" width="150">
+        <img src="https://1000logos.net/wp-content/uploads/2021/12/Norton-Logo.png" alt="Norton Logo" width="250">
     </div>
     """,
     unsafe_allow_html=True,
 )
+
 st.markdown(
     """
     <footer>
@@ -107,14 +136,18 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-tab0,tab1,tab3,tab4 = st.tabs(["Visualizations","Visualization Insight Generation", "Feedback Categorization", "User Prompt for Feedback"])
+installation_type_context = (
+        "FRESH installs = new installation without data. If aiid == 'mmm_prw_tst_007_498_c', it's a FRESH install. "
+        "MIGRATED installs = updated software retaining old data. If aiid == 'mmm_n36_mig_000_888_m', it's a MIGRATED install."
+)
+tab0,tab1,tab3,tab4,tab5 = st.tabs(["Visualizations","Visualization Insight Generation", "Feedback Categorization", "User Prompt for Feedback","User Q&A on JSON"])
 ssl._create_default_https_context = ssl._create_unverified_context
 os.environ['CURL_CA_BUNDLE'] = ''
 os.environ['REQUESTS_CA_BUNDLE'] = ''
 endpoint = st.secrets["AZURE_OPENAI_BASE"]
 api_key = st.secrets["AZURE_OPENAI_API_KEY"]
 client = AzureOpenAI(
-    api_version="2024-02-01",
+    api_version="2024-09-01-preview",
     azure_endpoint=endpoint,
     api_key=api_key
 )
@@ -194,6 +227,287 @@ def generate_feedback_pdf(categories_summary, file_path="feedback_analysis.pdf")
     pdf.add_summary(categories_summary)
     pdf.output(file_path)
     return file_path
+with tab3:
+    uploaded_file = st.file_uploader("Upload pre-categorized feedback CSV", type=["csv"])
+    if uploaded_file is not None:
+        df = pd.read_csv(uploaded_file)
+        if 'Feature Category' not in df.columns or 'Sentiment' not in df.columns:
+            st.error("The uploaded CSV must contain 'Feature Category' and 'Sentiment' columns.")
+        else:
+            st.session_state['results_df'] = df  
+            st.write("Feedback Categorization and Sentiment Analysis:")
+            st.write(df)
+            category_counts = df['Feature Category'].value_counts()
+            st.write("Feature Category Counts:")
+            st.write(category_counts)
+            sentiment_counts = df['Sentiment'].value_counts()
+            st.write("Sentiment Category Counts:")
+            st.write(sentiment_counts)
+
+            if 'category_tables' not in st.session_state:
+                st.session_state['category_tables'] = {}
+            for category in df['Feature Category'].unique():
+                category_rows = df[df['Feature Category'] == category]
+                relevant_columns = [
+                    'aiid', 'version_app', 'version', 'architecture', 'city', 
+                    'region', 'country', 'uninstall_text_feedback', 'uninstall_feedback_value'
+                ]
+                category_table = category_rows[['text_feedback', 'Sentiment', 'Feature Category', *relevant_columns]]
+                st.session_state['category_tables'][category] = category_table
+                st.write(f"Category Feedback Table for '{category}':")
+                st.dataframe(category_table)
+
+            @st.cache_data
+            def get_category_analysis(category, feedback_rows, feedback_column):
+                category_tables = st.session_state['category_tables']
+                relevant_columns_display = ", ".join(relevant_columns)
+                explanation_prompt = (
+                    f"## Detailed Analysis for: {category}\n\n"
+                    f"### Overview:\n"
+                    f"Conduct an in-depth analysis of all feedback categorized as '{category}'. Focus on identifying "
+                    f"trends, providing feedback quotes, and offering insights based on the available data across the following relevant columns: "
+                    f"{relevant_columns_display}.\n\n"
+                    f"### Category Feedback Data:\n"
+                    f"{category_tables}\n\n"
+                    f"### Contextual Insights and Trends:\n"
+                    f"Use the relevant columns to uncover meaningful insights. Analyze patterns across app versions, regions, architectures, "
+                    f"and uninstall feedback, considering how these factors influence user sentiment and behavior. Be sure to include "
+                    f"substantive quotes from the feedback to justify your insights and provide real-world context.\n"
+                    f"Also, explore possible correlations or overlaps with other categories (e.g., VPN, Firewall).\n\n"
+                    f"### Instructions:\n"
+                    f"1. **Key Insights**: Provide a detailed summary of the key issues raised for '{category}'. Focus on identifying trends, repeating patterns, or common concerns across the relevant data.\n"
+                    f"2. **Sentiment Analysis**: Dive into the sentiment distribution for this category, using feedback quotes to highlight significant sentiment trends (e.g., clusters of negative feedback in specific regions or versions).\n"
+                    f"3. **Version-Specific Trends**: Highlight any issues tied to specific app versions or architectures, and relate these to sentiment trends. Use quotes from users to substantiate the claims.\n"
+                    f"4. **Regional Insights**: Analyze any regional variations in feedback and include device-specific patterns where applicable. Compare these trends with those in other categories.\n"
+                    f"5. **Installation type Insights**: {installation_type_context} .Analyze the feedback based on the installation type (FRESH or MIGRATED) and provide insights on the differences in feedback between these types.\n"
+                    f"5. **Uninstall Feedback Trends**: Investigate if uninstall feedback is correlated with specific features, regions, or app versions. Analyze uninstall feedback for patterns or critical issues.\n"
+                    f"6. **Inter-category Trends**: Identify overlaps or divergences in feedback between '{category}' and other categories. For example, are similar trends present in feedback for VPN or Firewall? Compare trends using feedback quotes where applicable.\n"
+                    f"7. **Actionable Insights**: Summarize findings and provide actionable recommendations for improving user experience based on the detailed analysis. "
+                    f"Be sure to focus on critical areas of concern, patterns of dissatisfaction, and common feedback themes.\n\n"
+                    f"### Final Summary:\n"
+                    f"Summarize the findings for the {category} category and provide recommendations based on trends observed across the relevant columns."
+                )
+
+                response = client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[
+                        {"role": "system", "content": "You are an expert analyst for going through customer feedback along with their customer data and generating detailed insights based on all their data."},
+                        {"role": "user", "content": explanation_prompt}
+                    ],
+                    temperature=0.2,
+                    n=1
+                )
+                return response.choices[0].message.content.strip()
+
+            @st.cache_data
+            def plot_stacked_bar_chart(results_df):
+                category_sentiment_counts = pd.crosstab(results_df['Feature Category'], results_df['Sentiment'])
+                st.bar_chart(category_sentiment_counts)
+
+            plot_stacked_bar_chart(df)
+            st.download_button("Download Analysis", df.to_csv(index=False), file_name="analysis_with_categories.csv")
+
+            if 'categories_analysis' not in st.session_state:
+                st.session_state['categories_analysis'] = {}
+            for category in df['Feature Category'].unique():
+                if category not in st.session_state['categories_analysis']:
+                    category_rows = df[df['Feature Category'] == category]
+                    st.session_state['categories_analysis'][category] = get_category_analysis(category, category_rows, 'text_feedback')
+
+            st.write("Detailed Analysis for Each Feedback Category:")
+            for category, analysis in st.session_state['categories_analysis'].items():
+                with st.expander(f"Category: {category}"):
+                    st.write(analysis)
+            if 'pdf_file_path' not in st.session_state:
+                pdf_file_path = generate_feedback_pdf(st.session_state['categories_analysis'])
+                st.session_state['pdf_file_path'] = pdf_file_path
+            with open(st.session_state['pdf_file_path'], "rb") as pdf_file:
+                st.download_button(
+                    label="Download Feedback Analysis PDF",
+                    data=pdf_file,
+                    file_name="feedback_analysis.pdf",
+                    mime="application/pdf",
+                    key="pdf_download"
+                )
+    else:
+        st.write("Please upload a pre-categorized feedback CSV to proceed.")
+
+float_init(theme=True, include_unstable_primary=False)
+
+def chat_content():
+    st.session_state['chat_history'].append(st.session_state['content'])
+
+with tab4:
+    st.title("Feedback Insight Chat")
+    if 'chat_history' not in st.session_state:
+        st.session_state['chat_history'] = []
+    if 'categories_analysis' not in st.session_state or not st.session_state['categories_analysis']:
+        st.write("No feedback summaries available. Please visit the 'Feedback Categorization' tab first.")
+    else:
+        if 'category_tables' not in st.session_state:
+            st.session_state['category_tables'] = {}
+        if 'load_state' not in st.session_state:    
+            st.session_state['load_state'] = False  
+        if not st.session_state['load_state']:  
+            for category in st.session_state['categories_analysis'].keys():
+                category_rows = df[df['Feature Category'] == category]
+                st.session_state['category_tables'][category] = category_rows[['text_feedback', 'Sentiment', 'Feature Category', 'aiid', 'version_app', 'version', 'architecture', 'city', 'region', 'country']]
+            st.session_state['load_state'] = True  
+
+        col1, = st.columns(1)
+        with col1:
+            with st.container(border=True):
+                if 'messages' not in st.session_state:
+                    st.session_state.messages = []
+
+                with st.container():
+                    st.chat_input(key='content', on_submit=chat_content) 
+                    button_b_pos = "3rem"
+                    button_css = float_css_helper(width="2.2rem", bottom=button_b_pos, transition=0)
+                    float_parent(css=button_css)
+                for message in st.session_state.messages:
+                    with st.chat_message(message["role"]):
+                        st.markdown(message["content"])
+                prompt = st.session_state.get('content')
+                if prompt:
+                    st.session_state.messages.append({"role": "user", "content": prompt})
+                    with st.chat_message("user"):
+                        st.markdown(prompt)
+                    summary_info = "\n".join([f"Category: {category}. Summary: {summary}" 
+                                              for category, summary in st.session_state['categories_analysis'].items()])
+                    
+                    system_message = {
+                        "role": "system", 
+                        "content": (
+                            "You are a highly intelligent assistant specializing in analyzing customer feedback data for Norton CyberSecurity. "
+                            "Your role is to answer questions thoroughly and accurately by analyzing the feedback category tables and generated summaries. "
+                            "Prioritize relevant tables for answers, and always examine the tables first when asked specific questions. "
+                            "If asked for specific data, insights, or quotes, retrieve them directly from the category tables and avoid summarizing unnecessarily. "
+                            "When responding to general, unrelated, or casual questions (such as greetings or non-feedback topics), reply conversationally without referencing feedback data."
+                        )
+                    }
+
+                    user_message = {
+                    "role": "user", 
+                    "content": (
+                        f"This is the session's conversation history so far: {st.session_state.messages}\n\n"
+                        f"### User Question:\n"
+                        f"{prompt}\n\n"
+                        f"### Response Instructions:\n"
+                        f"- **For Specific Data Requests**: If the user is asking for a list, specific rows, or data points (e.g., 'Show me 20 feedback entries' or 'List feedback from city X'), "
+                        f"retrieve that data directly from the category tables and present it clearly. Do not summarize unless explicitly asked.\n"
+                        f"- **For Trends or Insights**: Thoroughly analyze the category tables first. Look for patterns, common trends, or correlations, and explain the insights in a concise way. "
+                        f"Then review any generated summaries to add additional context. Base your answer primarily on the tables, then refer to the summaries only for added context.\n"
+                        f"- **For Mixed Questions**: If a question involves both specific data and trends (e.g., 'List entries for category X and analyze trends'), respond by first providing the requested data entries, then "
+                        f"follow with a deeper analysis of trends.\n\n"
+                        f"### Feedback Data:\n"
+                        f"- **Category Tables**: Use the following tables to retrieve data or analyze trends:\n"
+                        f"{st.session_state['category_tables'].items()}\n\n"
+                        f"- **Generated Summaries**: Refer to these only for context when necessary:\n"
+                        f"{summary_info}\n\n"
+                        f"Installation type context based on aiid - If the user asks about fresh or migrated installs refer to the aiid and this context: {installation_type_context}\n"
+                        f"### Dataset Summary (for context):\n"
+                        f"{dataset_summary}\n\n"
+                        f"### Answer Structure:\n"
+                        f"- **Straightforward Response**: If the user asks for specific feedback entries or data, provide it directly and accurately. Avoid unnecessary summaries.\n"
+                        f"- **In-depth Analysis**: When asked for insights or trends, first analyze the feedback tables, then cross-reference the summaries if needed. Ensure your response is thoughtful and evidence-backed."
+                    )
+                    }
+
+                    with st.chat_message("assistant"):
+                        stream = client.chat.completions.create(
+                            model=st.session_state["azure_openai_model"],
+                            messages=[
+                                {"role": "system", "content": system_message["content"]}, 
+                                {"role": "user", "content": user_message["content"]}
+                            ],
+                            stream=True,
+                            temperature=0.2
+                        )
+                        response = st.write_stream(stream)
+                    st.session_state.messages.append({"role": "assistant", "content": response})
+# with tab4:
+#     st.title("Feedback Insight Chat")
+
+#     prompt = st.chat_input("Ask a question about the feedback analysis:")
+#     if 'chat_history' not in st.session_state:
+#         st.session_state['chat_history'] = []
+#     if 'categories_summary' not in st.session_state or not st.session_state['categories_summary']:
+#         st.write("No feedback summaries available. Please visit the 'Feedback Categorization' tab first.")
+#     else:
+#         if 'category_tables' not in st.session_state:
+#             st.session_state['category_tables'] = {}
+#         if 'load_state' not in st.session_state:    
+#             st.session_state['load_state'] = False  
+#         if not st.session_state['load_state']:  
+#             for category in st.session_state['categories_summary'].keys():
+#                 category_rows = df[df['Feature Category'] == category]
+#                 st.session_state['category_tables'][category] = category_rows[['text_feedback', 'Sentiment', 'Feature Category', 'aiid', 'version_app', 'version', 'architecture', 'city', 'region', 'country']]
+#             st.session_state['load_state'] = True  
+        
+#         if "messages" not in st.session_state:
+#             st.session_state.messages = []
+
+#         for message in st.session_state.messages:
+#             with st.chat_message(message["role"]):
+#                 st.markdown(message["content"])
+
+#         if prompt :
+#             st.session_state.messages.append({"role": "user", "content": prompt})
+            
+#             with st.chat_message("user"):
+#                 st.markdown(prompt)
+
+#             summary_info = "\n".join([f"Category: {category}. Summary: {summary}" 
+#                                     for category, summary in st.session_state['categories_summary'].items()])
+#             tables_info = "\n".join([f"Category: {category}. Table:\n{table}" 
+#                                     for category, table in st.session_state['category_tables'].items()])
+            
+#             system_message = {
+#                 "role": "system", 
+#                 "content": (
+#                     "You are an insight generator for Norton CyberSecurity. Your job is to answer questions concisely based on customer feedback and the feedback tables. "
+#                     "If the user's question is unrelated to feedback or is general in nature (such as greetings or casual conversation), "
+#                     "respond conversationally without referencing the feedback summaries. Use the feature category tables mostly. Use summarized feedback data only when directly relevant."
+#                 )
+#             }
+
+#             user_message = {
+#                 "role": "user", 
+#                 "content": (
+#                     f"### User Question:\n"
+#                     f"{prompt}\n\n"
+#                     f"### Context:\n"
+#                     f"Look for common trends across categories and provide relevant feedback quotes to support the insights. "
+#                     f"For each insight, include 2-3 quotes from the feedback that justify your conclusions. "
+#                     f"Reference specific feedback categories and trends in your response.\n\n"
+#                     f"### Feature Category Tables (Including Feedback Quotes):\n"
+#                     f"{tables_info}\n\n"
+#                     f"### Summarized Feedback Data:\n"
+#                     f"{summary_info}\n\n"
+#                     f"### Answer Format:\n"
+#                     f"- **Brief and Clear**: Start with a decently sized summary of the most relevant insights.\n"
+#                     f"- **Link to Feedback**: Mention the specific category or categories related to the question.\n"
+#                     f"- **Quotes as Evidence**: For each insight or trend, provide 2-3 quotes from the feedback to back up your analysis.\n"
+#                     f"- **Avoid Unnecessary Details**: Focus only on the relevant insights from the feedback summaries, and keep your response brief."
+#                 )
+#             }
+#             with st.chat_message("assistant"):
+#                 stream = client.chat.completions.create(
+#                     model=st.session_state["azure_openai_model"],
+#                     messages=[
+#                         {"role": "system", "content": system_message["content"]}, 
+#                         {"role": "user", "content": user_message["content"]}
+#                     ],
+#                     stream=True,
+#                     temperature=0.2
+#                 )
+#                 response = st.write_stream(stream)
+#             st.session_state.messages.append({"role": "assistant", "content": response})
+
+    
+
+
 clients = bigquery.Client(project='ppp-cdo-rep-ext-6c')
 downloads_path = str(pathlib.Path.home() / "Downloads")
 output_csv_path = os.path.join(downloads_path, 'rating_feedback_results.csv')
@@ -311,33 +625,6 @@ query_job = clients.query(query)
 results = query_job.result()
 df = results.to_dataframe()
 df.to_csv(output_csv_path, index=False)
-dataset_summary = (
-    "### Dataset Summary\n\n"
-    "**Columns:**\n"
-    "- **identity.hwid**: Unique hardware identifier for each device.\n"
-    "- **event_timestamp**: Timestamp of the event, converted to a human-readable format.\n"
-    "- **date_ymd**: Date of the event in YYYY-MM-DD format.\n"
-    "- **text_feedback**: User-provided feedback text.\n"
-    "- **score**: Numeric score associated with the feedback.\n"
-    "- **origin**: Source of the feedback (e.g., platform, device).\n"
-    "- **country**: Country where the feedback originated.\n"
-    "- **region**: Region within the country of the feedback origin.\n"
-    "- **city**: City where the feedback originated.\n"
-    "- **skup**: License group or type.\n"
-    "- **version_app**: Version of the application used.\n"
-    "- **version**: Operating System platform version.\n"
-    "- **architecture**: Architecture of the platform (e.g., x86, ARM).\n"
-    "- **type**: Type of license.\n"
-    "- **aiid**: Application installation ID.\n"
-    "- **psn**: Product serial number.\n"
-    "- **uninstall_text_feedback**: Feedback provided by the user during uninstallation, or 'None' if not available.\n"
-    "- **uninstall_feedback_value**: The value or reason selected by the user during the uninstallation process.\n\n"
-    "### Key Statistics and Patterns\n\n"
-    "- **Feedback Analysis**: The `text_feedback` and `uninstall_text_feedback` fields contain qualitative feedback for sentiment analysis and theme extraction, including uninstallation reasons.\n"
-    "- **Temporal Patterns**: Use `event_timestamp` and `date_ymd` to analyze trends over time, including feedback patterns before uninstallation.\n"
-    "- **Geographic Insights**: Analyze `country`, `region`, and `city` for location-based trends and potential correlations with uninstall feedback.\n"
-    "- **Product and License Metrics**: Evaluate `version_app`, `version`, `architecture`, and `type` for product usage, license management, and uninstallation patterns.\n\n"
-)
 MAX_TOKENS = 8000 
 def process_entire_json(file_path):
     """Process the entire JSON file and return all records in a list."""
@@ -386,11 +673,12 @@ def get_final_summary(aggregated_summary,user_question):
     )
     
     response = client.chat.completions.create(
-        model=st.session_state["azure_openai_model"],
+        model="gpt-4o",
         messages=[
             {"role": "system", "content": "You are an insight generator for Norton CyberSecurity App that answers questions based on summarized JSON data."},
             {"role": "user", "content": prompt}
         ],
+        max_tokens=1000,
         temperature=0.3,
         n=1
     )
@@ -426,24 +714,25 @@ def set_chat_styles():
 def analyze_feedback(row, _client, feedback_column):
     install_type = "FRESH" if row['aiid'] == 'mmm_prw_tst_007_498_c' else "MIGRATED" if row['aiid'] == 'mmm_n36_mig_000_888_m' else "Unknown"
     feedback_text = row[feedback_column]
-    relevant_columns = ['aiid', 'version_app', 'version', 'architecture', 'city', 'region', 'country']
+    relevant_columns = ['uninstall_text_feedback','uninstall_feedback_value','aiid', 'version_app', 'version', 'architecture', 'city', 'region', 'country']
     column_values = ', '.join([f"{col}: {row[col]}" for col in relevant_columns if col in row and pd.notnull(row[col])])
     prompt = (
-        f"Feedback: '{feedback_text}'. Install type: {install_type}."
+        f"Install type: {install_type}. Feedback: '{feedback_text}'. "
         f"Context: {column_values}. "
         f"Analyze this user feedback in detail, focusing on the key themes raised."
-        f"Categorize the feedback into one of the following categories: Performance, VPN, UI/UX, Security, Installation, Licensing, Firewall, Cost or Other."
+        f"Categorize the feedback into one of the following categories: Performance, VPN, UI/UX, Security, Installation, Licensing, Firewall, Cost"
         f"If multiple categories apply, choose the one that seems most relevant based on the feedback content. "
         f"Additionally, assess the sentiment of the feedback as positive, neutral, or negative."
-        f"Only give 2 words in your response: The feature category and the sentiment category."
     )
     response = _client.chat.completions.create(
         model=st.session_state["azure_openai_model"],
         messages=[
-            {"role": "system", "content": "You are tasked with analyzing customer feedback and their data of Norton Cybersecurity and categorizing them."},
+            {"role": "system", "content": "You are tasked with analyzing user feedback in the context of software installation and product usage."},
+            {"role": "system", "content": "You will categorize the feedback into one of the predefined categories: Performance, VPN, UI/UX, Security, Installation, Licensing, Firewall, or Other. When multiple categories apply, select the most relevant."},
+            {"role": "system", "content": "Only give 2 words in your response: The feature category and the sentiment category."},
             {"role": "user", "content": prompt}
         ],
-        max_tokens=14,
+        max_tokens=10,
         temperature=0,
         n=1
     )
@@ -471,11 +760,12 @@ def get_visual_insights_response(question, combined_insights):
         f"Question: {question}. Provide an answer based on the following insights:\n{combined_insights}."
     )
     response = client.chat.completions.create(
-        model=st.session_state["azure_openai_model"],
+        model="gpt-4o",
         messages=[
             {"role": "system", "content": "You are a goal provider for a cybersecurity team and you answer questions based on customer data from visualizations."},
             {"role": "user", "content": user_prompt}
         ],
+        max_tokens=1500,
         temperature=0.3,
         n=1
     )
@@ -552,6 +842,7 @@ def get_visualization_details(vis_data):
         data_string = (f"Row Means:\n{row_means}\n\nColumn Means:\n{col_means}\n\n"
                     f"Full Data:\n{vis_data.to_string()}")
     return data_string
+
 with tab0:
     st.header("Automatic Insights and Visualization 🤖")
     df = pd.read_csv(output_csv_path)
@@ -642,8 +933,6 @@ with tab1:
             if i == len(visualizations) - 1:
                 visualization_prompt = (
                     f"### Dataset Context: {filtered_df}"
-                    f"You can also refer to this dataset summary so you know what each column refers to: "
-                    f"{dataset_summary}\n\n"
                     f"### Visualization: {vis_name}\n"
                     f"Here is the data from the visualization:\n{vis_data_string}\n\n"
                     
@@ -660,8 +949,6 @@ with tab1:
             else:
                 visualization_prompt = (
                     f"### Dataset Context: {filtered_df}"
-                    f"You can also refer to this dataset summary so you know what each column refers to: "
-                    f"{dataset_summary}\n\n"
                     f"### Visualization: {vis_name}\n"
                     f"Here is the data from the visualization:\n{vis_data_string}\n\n"
                     
@@ -675,12 +962,12 @@ with tab1:
                     f"Provide a well-reasoned and structured response based on the data."
                 )
             response = client.chat.completions.create(
-                model="gpt-4o",
+                model=st.session_state["azure_openai_model"],
                 messages=[
                     {"role": "system", "content": "You are a data analyst and insight generator for Norton CyberSecurity, tasked with analyzing customer feedback data."},
                     {"role": "user", "content": visualization_prompt}
                 ],
-                temperature=0.2,
+                temperature=0.5,
                 n=1
             )
             visual_insight = response.choices[0].message.content.strip()
@@ -695,9 +982,6 @@ with tab1:
         all_insights_combined = "\n\n".join(f"**{name}**: {insight}" for name, insight in st.session_state['all_insights'].items())
         
         final_summary_prompt = (
-            f"### Dataset Context: {filtered_df}"
-            f"You can also refer to this dataset summary so you know what each column refers to: "
-            f"{dataset_summary}\n\n"
             f"### Comprehensive Summary of Insights:\n"
             f"Based on the following detailed insights from multiple visualizations, provide a comprehensive summary that:\n\n"
             f"1. **Identifies Cross-Visualization Patterns**: Look for recurring themes or patterns across different visualizations, such as geographical trends, app version performance, and feedback score trends.\n"
@@ -716,7 +1000,8 @@ with tab1:
                 {"role": "system", "content": "You are a data analyst for Norton CyberSecurity providing a comprehensive overview of customer feedback data."},
                 {"role": "user", "content": final_summary_prompt}
             ],
-            temperature=0.2,
+            max_tokens=4000,
+            temperature=0.5,
             n=1
         )
         
@@ -751,230 +1036,19 @@ with tab1:
 #                 chat_response = chunk
 #                 response_placeholder.write(chat_response)
 #         response_placeholder.write(chat_response)
-with tab3:
-    df['text_feedback'] = df['text_feedback'].apply(preprocess_feedback)
-    feedback_column = 'text_feedback'
-    if 'categories' not in st.session_state:
-        st.session_state['categories'] = []
-    if 'sentiments' not in st.session_state:
-        st.session_state['sentiments'] = []
-    if 'results_df' not in st.session_state:
-        df_sample = df
-        categories = []
-        sentiments = []
-        for index, row in df_sample.iterrows():
-            category, sentiment = analyze_feedback(row, client, feedback_column)
-            categories.append(category)
-            sentiments.append(sentiment)
-        results_df = df_sample.copy()
-        results_df['Feature Category'] = categories
-        results_df['Sentiment'] = sentiments
-        st.session_state['results_df'] = results_df
-    else:
-        results_df = st.session_state['results_df']
-    st.write("Feedback Categorization and Sentiment Analysis:")
-    st.write(results_df)
-    category_counts = results_df['Feature Category'].value_counts()
-    st.write("Feature Category Counts:")
-    st.write(category_counts)
-    sentiment_counts = results_df['Sentiment'].value_counts()
-    st.write("Sentiment Category Counts:")
-    st.write(sentiment_counts)
-    if 'category_tables' not in st.session_state:
-        st.session_state['category_tables'] = {}
-    for category in results_df['Feature Category'].unique():
-        category_rows = results_df[results_df['Feature Category'] == category]
-        relevant_columns = [
-            'aiid', 'version_app', 'version', 'architecture', 'city', 
-            'region', 'country', 'uninstall_text_feedback', 'uninstall_feedback_value'
-        ]
-        category_table = category_rows[['text_feedback', 'Sentiment', 'Feature Category', *relevant_columns]]
-        st.session_state['category_tables'][category] = category_table
-        st.write(f"Category Feedback Table for '{category}':")
-        st.dataframe(category_table)
-    @st.cache_data
-    def get_category_summary(category, feedback_rows, feedback_column):
-        category_tables = st.session_state['category_tables']
-        explanation_prompt = (
-            f"Analyse the following Category Feedback Tables for all the feedback categories':\n"
-            f"{category_tables}\n\n"
-            f"## Category Summary for: {category}\n\n"
-            f"You can also refer to this dataset summary so you know what each column refers to: "
-            f"{dataset_summary}\n\n"
-            f"### Overview:\n"
-            f"Here is a summary of feedback categorized as '{category}'.\n\n"
-            f"### Intersecting Trends:\n"
-            f"Analyze the feedback for any trends that may intersect with other categories, such as VPN and Firewall, "
-            f"or if there are patterns observed across regions or device types. Compare with the tables from other categories.\n\n"
-            f"### Instructions:\n"
-            f"Your task is to generate a detailed summary and analysis of the feedback provided. Follow the guidelines below:\n\n"
-            f"1. **General Overview**: Begin by providing a high-level overview of the feedback for the '{category}' category.\n"
-            f"2. **Key Issues and Concerns**: Identify and list the main issues and concerns raised by users. Highlight any recurring themes in the feedback. Mention any commonly reported bugs, performance issues, or feature requests.\n"
-            f"3. **Sentiment**: Note any recurring positive, negative, or neutral sentiments across different feedback entries. Provide counts or percentages of sentiments where possible (e.g., 60% positive, 30% negative, 10% neutral).\n"
-            f"4. **Contextual Insights**: Dive deeper into contextual insights from the feedback:\n"
-            f"   - **Version-Specific Insights**: Identify any trends related to specific app versions or architecture (e.g., issues that occur more frequently in certain app versions or only on specific device architectures).\n"
-            f"   - **Regional Variations**: Identify and analyze any significant regional variations in feedback, such as common issues in certain countries, cities, or regions.\n"
-            f"   - **Device/Architecture Issues**: Highlight any issues that may be unique to specific device types (e.g., phones, tablets, different operating systems) or architectures (e.g., x86, ARM).\n"
-            f"   - **Uninstall Feedback**: Examine if uninstall feedback and reasons correlate with specific patterns (e.g., regional differences, version issues, etc.).\n"
-            f"5. **Patterns and Trends**: Note any observable patterns in feedback over time. Mention whether issues are new, ongoing, or have been resolved in recent updates. If you have access to previous summaries, compare the current issues with past feedback to identify new or recurring problems.\n"
-            f"6. **Notable Comments**: Select and analyze notable feedback entries that stand out (either positively or negatively). Provide detailed insights about these comments and their potential implications.\n"
-            f"7. **Sentiment vs. Contextual Factors**: Explore any correlations between feedback sentiment and contextual factors such as version, region, or device type (e.g., negative feedback from specific regions or devices).\n"
-            f"8. **Localized Feedback Clusters**: Mention if you notice localized clusters of negative feedback (e.g., certain regions or cities with disproportionately high negative sentiment).\n\n"
-            f"### Summary of Key Insights:\n"
-            f"- **Main Issues**: Summarize the top concerns raised in this category and back them up with feedback quotes.\n"
-            f"- **Recurring Themes**: Highlight recurring feedback themes across various contexts and provide 2-3 quotes for each theme.\n"
-            f"- **Regional/Version Trends**: Note any significant regional differences or app version issues, along with relevant quotes.\n"
-            f"- **Uninstall Feedback Trends**: Include trends or reasons linked to uninstall feedback if relevant, supported by quotes.\n"
-            f"- **Potential Reasons**: Provide possible explanations for the issues raised in the feedback, supported by user quotes (e.g., compatibility issues, misunderstood features, bugs in recent updates).\n\n"
-            f"### Conclusion:\n"
-            f"Based on the above, provide a final conclusion and, if possible, offer recommendations for addressing the key issues raised by users. Suggest potential fixes, improvements, or further investigation areas to improve user satisfaction in the {category} category."
-        )
 
-        response = client.chat.completions.create(
-            model=st.session_state["azure_openai_model"],
-            messages=[
-                {"role": "system", "content": "You are a smart insight generator and feedback summarizer for customer feedback of a Norton CyberSecurity App."},
-                {"role": "user", "content": explanation_prompt}
-            ],
-            max_tokens=4000,
-            temperature=0.2,
-            n=1
-        )
-        return response.choices[0].message.content.strip()
-
-    @st.cache_data
-    def plot_stacked_bar_chart(results_df):
-        category_sentiment_counts = pd.crosstab(results_df['Feature Category'], results_df['Sentiment'])
-        st.bar_chart(category_sentiment_counts)
-    plot_stacked_bar_chart(results_df)
-    st.download_button("Download Analysis", df.to_csv(index=False), file_name="analysis_with_categories.csv")
-    if 'categories_summary' not in st.session_state:
-        st.session_state['categories_summary'] = {}
-    for category in results_df['Feature Category'].unique():
-        if category not in st.session_state['categories_summary']:
-            category_rows = results_df[results_df['Feature Category'] == category]
-            st.session_state['categories_summary'][category] = get_category_summary(category, category_rows, 'text_feedback')
-    st.write("Detailed Explanations for Each Feedback Category:")
-    for category, explanation in st.session_state['categories_summary'].items():
-        with st.expander(f"Category: {category}"):
-            st.write(explanation)
-    if 'pdf_file_path' not in st.session_state:
-        pdf_file_path = generate_feedback_pdf(st.session_state['categories_summary'])
-        st.session_state['pdf_file_path'] = pdf_file_path
-    with open(st.session_state['pdf_file_path'], "rb") as pdf_file:
-        st.download_button(
-            label="Download Feedback Analysis PDF",
-            data=pdf_file,
-            file_name="feedback_analysis.pdf",
-            mime="application/pdf",
-            key="pdf_download"
-        )
-float_init(theme=True, include_unstable_primary=False)
-
-def chat_content():
-    st.session_state['chat_history'].append(st.session_state['content'])
-
-with tab4:
-    st.title("Feedback Insight Chat")
-    if 'chat_history' not in st.session_state:
-        st.session_state['chat_history'] = []
-    if 'categories_analysis' not in st.session_state or not st.session_state['categories_analysis']:
-        st.write("No feedback summaries available. Please visit the 'Feedback Categorization' tab first.")
-    else:
-        if 'category_tables' not in st.session_state:
-            st.session_state['category_tables'] = {}
-        if 'load_state' not in st.session_state:    
-            st.session_state['load_state'] = False  
-        if not st.session_state['load_state']:  
-            for category in st.session_state['categories_analysis'].keys():
-                category_rows = df[df['Feature Category'] == category]
-                st.session_state['category_tables'][category] = category_rows[['text_feedback', 'Sentiment', 'Feature Category', 'aiid', 'version_app', 'version', 'architecture', 'city', 'region', 'country']]
-            st.session_state['load_state'] = True  
-
-        col1, = st.columns(1)
-        with col1:
-            with st.container(border=True):
-                if 'messages' not in st.session_state:
-                    st.session_state.messages = []
-
-                with st.container():
-                    st.chat_input(key='content', on_submit=chat_content) 
-                    button_b_pos = "3rem"
-                    button_css = float_css_helper(width="2.2rem", bottom=button_b_pos, transition=0)
-                    float_parent(css=button_css)
-                for message in st.session_state.messages:
-                    with st.chat_message(message["role"]):
-                        st.markdown(message["content"])
-                prompt = st.session_state.get('content')
-                if prompt:
-                    st.session_state.messages.append({"role": "user", "content": prompt})
-                    with st.chat_message("user"):
-                        st.markdown(prompt)
-                    summary_info = "\n".join([f"Category: {category}. Summary: {summary}" 
-                                              for category, summary in st.session_state['categories_analysis'].items()])
-                    
-                    system_message = {
-                        "role": "system", 
-                        "content": (
-                            "You are a highly intelligent assistant specializing in analyzing customer feedback data for Norton CyberSecurity. "
-                            "Your role is to answer questions thoroughly and accurately by analyzing the feedback category tables and generated summaries. "
-                            "Prioritize relevant tables for answers, and always examine the tables first when asked specific questions. "
-                            "If asked for specific data, insights, or quotes, retrieve them directly from the category tables and avoid summarizing unnecessarily. "
-                            "When responding to general, unrelated, or casual questions (such as greetings or non-feedback topics), reply conversationally without referencing feedback data."
-                        )
-                    }
-
-                    user_message = {
-                    "role": "user", 
-                    "content": (
-                        f"This is the session's conversation history so far: {st.session_state.messages}\n\n"
-                        f"### User Question:\n"
-                        f"{prompt}\n\n"
-                        f"### Response Instructions:\n"
-                        f"- **For Specific Data Requests**: If the user is asking for a list, specific rows, or data points (e.g., 'Show me 20 feedback entries' or 'List feedback from city X'), "
-                        f"retrieve that data directly from the category tables and present it clearly. Do not summarize unless explicitly asked.\n"
-                        f"- **For Trends or Insights**: Thoroughly analyze the category tables first. Look for patterns, common trends, or correlations, and explain the insights in a concise way. "
-                        f"Then review any generated summaries to add additional context. Base your answer primarily on the tables, then refer to the summaries only for added context.\n"
-                        f"- **For Mixed Questions**: If a question involves both specific data and trends (e.g., 'List entries for category X and analyze trends'), respond by first providing the requested data entries, then "
-                        f"follow with a deeper analysis of trends.\n\n"
-                        f"### Feedback Data:\n"
-                        f"- **Category Tables**: Use the following tables to retrieve data or analyze trends:\n"
-                        f"{st.session_state['category_tables'].items()}\n\n"
-                        f"- **Generated Summaries**: Refer to these only for context when necessary:\n"
-                        f"{summary_info}\n\n"
-                        f"Installation type context based on aiid - If the user asks about fresh or migrated installs refer to the aiid and this context: {installation_type_context}\n"
-                        f"### Dataset Summary (for context):\n"
-                        f"{dataset_summary}\n\n"
-                        f"### Answer Structure:\n"
-                        f"- **Straightforward Response**: If the user asks for specific feedback entries or data, provide it directly and accurately. Avoid unnecessary summaries.\n"
-                        f"- **In-depth Analysis**: When asked for insights or trends, first analyze the feedback tables, then cross-reference the summaries if needed. Ensure your response is thoughtful and evidence-backed."
-                    )
-                    }
-
-                    with st.chat_message("assistant"):
-                        stream = client.chat.completions.create(
-                            model=st.session_state["azure_openai_model"],
-                            messages=[
-                                {"role": "system", "content": system_message["content"]}, 
-                                {"role": "user", "content": user_message["content"]}
-                            ],
-                            stream=True,
-                            temperature=0.2
-                        )
-                        response = st.write_stream(stream)
-                    st.session_state.messages.append({"role": "assistant", "content": response})
-        # with tab5:
-        #     st.header("User Q&A Based on Large JSON File")
-        #     json_file_path = r'/Users/aravind.vijayaraghav/Downloads/COMPLETE_CONSUMER_LIFECYCLE.json'
-        #     st.write("Processing large JSON file...")
-        #     json_data = process_entire_json(json_file_path) 
-        #     aggregated_summary = aggregate_summaries(json_data)  
-        #     user_question = st.text_input("Ask a question about the JSON file content:")
-        #     if user_question:
-        #         st.write("Generating final response...")
-        #         @st.cache_data
-        #         def get_final_response(user_question, aggregated_summary):
-        #             return get_final_summary(aggregated_summary, user_question)
-        #         response_placeholder = st.empty()
-        #         final_response = get_final_response(user_question, aggregated_summary)
-        #         response_placeholder.write(final_response)
+    with tab5:
+        st.header("User Q&A Based on Large JSON File")
+        json_file_path = r'/Users/aravind.vijayaraghav/Downloads/COMPLETE_CONSUMER_LIFECYCLE.json'
+        st.write("Processing large JSON file...")
+        json_data = process_entire_json(json_file_path) 
+        aggregated_summary = aggregate_summaries(json_data)  
+        user_question = st.text_input("Ask a question about the JSON file content:")
+        if user_question:
+            st.write("Generating final response...")
+            @st.cache_data
+            def get_final_response(user_question, aggregated_summary):
+                return get_final_summary(aggregated_summary, user_question)
+            response_placeholder = st.empty()
+            final_response = get_final_response(user_question, aggregated_summary)
+            response_placeholder.write(final_response)
