@@ -111,9 +111,8 @@ tab0,tab1,tab3,tab4 = st.tabs(["Visualizations","Visualization Insight Generatio
 ssl._create_default_https_context = ssl._create_unverified_context
 os.environ['CURL_CA_BUNDLE'] = ''
 os.environ['REQUESTS_CA_BUNDLE'] = ''
-endpoint = os.environ["AZURE_OPENAI_BASE"]
-api_key = os.environ["AZURE_OPENAI_API_KEY"]
-print(f"Endpoint: {endpoint}, API Key: {api_key}")
+endpoint = st.secrets["AZURE_OPENAI_BASE"]
+api_key = st.secrets["AZURE_OPENAI_API_KEY"]
 client = AzureOpenAI(
     api_version="2024-02-01",
     azure_endpoint=endpoint,
