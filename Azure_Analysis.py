@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from openai import AzureOpenAI
 from google.cloud import bigquery
-import os
 import ssl
 from io import BytesIO
 from fpdf import FPDF
