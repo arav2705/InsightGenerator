@@ -583,14 +583,11 @@ with tab3:
             #         key="pdf_download"
             #     )
 
-            file_to_run = "Another_AI_Test.py"
-
+            current_directory = os.getcwd()
+            target_script = os.path.join(current_directory, "Another_AI_Test.py")
             if st.button("Open Feedback Insight Chat"):
-                try:
-                    subprocess.Popen(["streamlit", "run", file_to_run])
-                    st.success("Feedback Insight Chat is opening...")
-                except Exception as e:
-                    st.error(f"An error occurred: {e}")
+                subprocess.Popen(["streamlit", "run", target_script])
+                st.rerun()
 
             # if st.button("Open Feedback Insight Chat"):
             #    subprocess.Popen(["streamlit", "run", "/Users/aravind.vijayaraghav/Documents/Data_AI_ML/Another_AI_Test.py"])
