@@ -106,8 +106,8 @@ installation_type_context = (
 )
 tab0,tab1,tab3= st.tabs(["Visualizations","Visualization Insight Generation", "Feedback Categorization"])
 ssl._create_default_https_context = ssl._create_unverified_context
-os.environ['CURL_CA_BUNDLE'] = ''
-os.environ['REQUESTS_CA_BUNDLE'] = ''
+# os.environ['CURL_CA_BUNDLE'] = ''
+# os.environ['REQUESTS_CA_BUNDLE'] = ''
 # endpoint = st.secrets["AZURE_OPENAI_BASE"]
 # api_key = st.secrets["AZURE_OPENAI_API_KEY"]
 client = AzureOpenAI(
