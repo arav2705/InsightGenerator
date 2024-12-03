@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from openai import AzureOpenAI
 from google.cloud import bigquery
+import pandas.tseries.offsets as offsets
+import os
 import ssl
 from io import BytesIO
 from fpdf import FPDF
@@ -16,6 +18,7 @@ import pandas as pd
 import numpy as np
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 import re
+import subprocess
 import time
 import pathlib
 import json
@@ -55,94 +58,56 @@ dataset_summary = (
     "- **Product and License Metrics**: Evaluate `version_app`, `version`, `architecture`, and `type` for product usage, license management, and uninstallation patterns.\n\n"
 )
 st.markdown(
-    """
+    '''
     <style>
-    .main {
-        background-color: #ffffff;  
-        padding: 20px;
-        color: #000000;  
-    }
-    [data-testid="stSidebar"] {
-        background-color: #f8c200 !important; 
-        padding: 10px;
-    }
-    .stTabs {
-        background-color: #1b1b1b; 
-        color: white;
-        padding: 10px;
-    }
-    .stTabs div[role="tab"] {
-        border: 2px solid #f8c200;
-        margin-right: 10px;
-        padding: 10px;
-        border-radius: 5px;
-        color: #f8c200;
-        font-size: 18px;
-        font-weight: bold;
-    }
-    .stTabs div[aria-selected="true"] {
-        background-color: #f8c200; 
-        color: black;
-    }
-    .stButton button {
-        background-color: #f8c200 !important;
-        color: black !important;
-        font-weight: bold;
-        border-radius: 5px;
-        border: none;
-        padding: 10px 20px;
-    }
-    .css-1x8cf1d {
-        border: 2px dashed #f8c200 !important;
-        color: black !important;
-        background-color: #ffffff !important;
-    }
     .logo-container {
         display: flex;
         justify-content: center;
         align-items: center;
         padding: 20px 0;
     }
-    footer {
-        position: fixed;
-        bottom: 0;
-        width: 88.05%;
-        background-color: #1b1b1b;  
-        color: #ffffff;  
-        text-align: center;
-        padding: 10px 0;
-        font-weight: bold;
-    }
     </style>
-    """,
+    ''',
     unsafe_allow_html=True,
 )
-
 st.markdown(
     """
     <div class="logo-container">
-        <img src="https://1000logos.net/wp-content/uploads/2021/12/Norton-Logo.png" alt="Norton Logo" width="250">
+        <img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTa_iQ5H9Fpa8iIjTWniSE9_KOHuiz6kSfGDg&s"  width="150">
     </div>
     """,
     unsafe_allow_html=True,
 )
-
 st.markdown(
     """
-    <footer>
-        Norton Lifecycle - Powered by AI
-    </footer>
+    <style>
+    .dataframe tbody tr td {
+        font-size: 18px;  /* Adjust as needed */
+    }
+    .dataframe thead tr th {
+        font-size: 20px;  /* Adjust as needed */
+    }
+    </style>
     """,
-    unsafe_allow_html=True,
+    unsafe_allow_html=True
 )
+
+# st.markdown(
+#     """
+#     <footer>
+#         Norton Lifecycle - Powered by AI
+#     </footer>
+#     """,
+#     unsafe_allow_html=True,
+# )
 installation_type_context = (
-        "FRESH installs = new installation without data. If aiid == 'mmm_prw_tst_007_498_c', it's a FRESH install. "
+        "FRESH installs = new installation without data. If aiid == 'mmm_prw_tst_007_498_c' or Unknown, it's a FRESH install."
         "MIGRATED installs = updated software retaining old data. If aiid == 'mmm_n36_mig_000_888_m', it's a MIGRATED install."
 )
-tab0,tab1,tab3,tab4,tab5 = st.tabs(["Visualizations","Visualization Insight Generation", "Feedback Categorization", "User Prompt for Feedback","User Q&A on JSON"])
+tab0,tab1,tab3= st.tabs(["Visualizations","Visualization Insight Generation", "Feedback Categorization"])
 ssl._create_default_https_context = ssl._create_unverified_context
-# os.environ['CURL_CA_BUNDLE'] = ''
-# os.environ['REQUESTS_CA_BUNDLE'] = ''
+os.environ['CURL_CA_BUNDLE'] = ''
+os.environ['REQUESTS_CA_BUNDLE'] = ''
 endpoint = st.secrets["AZURE_OPENAI_BASE"]
 api_key = st.secrets["AZURE_OPENAI_API_KEY"]
 client = AzureOpenAI(
@@ -150,6 +115,15 @@ client = AzureOpenAI(
     azure_endpoint=endpoint,
     api_key=api_key
 )
+def map_aiid_to_label(aiid_value):
+    if not aiid_value or pd.isna(aiid_value) or aiid_value == '' or aiid_value == 'NULL' or aiid_value == 'Unknown':
+        return 'Fresh Installs'
+    elif aiid_value == 'mmm_prw_tst_007_498_c':
+        return 'Fresh Installs'
+    elif aiid_value == 'mmm_n36_mig_000_888_m':
+        return 'Migrated Installs'
+    else:
+        return 'Other'
 if "azure_openai_model" not in st.session_state:
     st.session_state["azure_openai_model"] = "gpt-4o"
 class PDF(FPDF):
@@ -179,23 +153,32 @@ class PDF(FPDF):
     def add_insight(self, title, body):
         self.chapter_title(title)
         self.chapter_body(body)
+@st.cache_data
 def generate_pdf(all_insights, visualizations):
     pdf = PDF()
     pdf.add_page()
     for vis_name, vis_data in visualizations.items():
         pdf.chapter_title(vis_name)
         fig, ax = plt.subplots()
+        
         if isinstance(vis_data, pd.Series):
             vis_data.plot(ax=ax, kind='line', title=vis_name)
         elif vis_data.ndim == 2:
-            sns.heatmap(vis_data, ax=ax, cmap='YlGnBu')
-            ax.set_title(vis_name)
+            if vis_data.applymap(lambda x: isinstance(x, (int, float))).all().all():
+                sns.heatmap(vis_data, ax=ax, cmap='YlGnBu')
+                ax.set_title(vis_name)
+            else:
+                ax.text(0.5, 0.5, "Non-numeric data; heatmap skipped.", ha='center', va='center')
+                ax.set_title(f"{vis_name} (Non-numeric data)")
         else:
             vis_data.plot(ax=ax, kind='bar', title=vis_name)
+        
         pdf.add_figure(fig)
         plt.close(fig)
+        
         insight_text = all_insights.get(vis_name, "")
         pdf.add_insight(f"Insights for {vis_name}", insight_text)
+    
     return pdf.output(dest='S').encode('latin1')
 class PDF2(FPDF):
     def header(self):
@@ -220,19 +203,108 @@ class PDF2(FPDF):
         text = text.replace(u'\u2019', "'")  
         text = re.sub(r'[^\x00-\x7F]+', ' ', text) 
         return text
+@st.cache_data
 def generate_feedback_pdf(categories_summary, file_path="feedback_analysis.pdf"):
     pdf = PDF2()
     pdf.add_page()
     pdf.add_summary(categories_summary)
     pdf.output(file_path)
     return file_path
+@st.cache_data
+def get_feature_analysis(df, _client):
+    ai_analysis = []
+    
+    for version_app in df['version_app'].unique():  
+        version_df = df[df['version_app'] == version_app]
+        feature_avg_ratings = version_df.groupby('Feature Category')['score'].mean().reset_index()
+        feature_avg_ratings.columns = ['Feature', 'Mean App Rating']
+        
+        for _, row in feature_avg_ratings.iterrows():
+            feature = row['Feature']
+            mean_rating = row['Mean App Rating']
+            feature_feedback = version_df[version_df['Feature Category'] == feature]['text_feedback'].tolist()
+            uninstall_feedback = version_df[version_df['Feature Category'] == feature]['uninstall_text_feedback'].tolist()
+            uninstall_values = version_df[version_df['Feature Category'] == feature]['uninstall_feedback_value'].tolist()
+            installs = version_df[version_df['Feature Category'] == feature]['aiid'].apply(map_aiid_to_label)
+            fresh_installs = installs[installs == 'Fresh Installs'].count()
+            migrated_installs = installs[installs == 'Migrated Installs'].count()
+
+            sentiment_counts = version_df[version_df['Feature Category'] == feature]['Sentiment'].value_counts()
+            positive_count = sentiment_counts.get('Positive', 0)
+            neutral_count = sentiment_counts.get('Neutral', 0)
+            negative_count = sentiment_counts.get('Negative', 0)
+
+            summary_prompt = (
+                "DON'T PROVIDE A HEADING FOR THIS RESPONSE, JUST GENERATE THE RESPONSE\n\n"
+                f"Provide an in-depth analysis for feedback on '{feature}' in app version {version_app} of Norton CyberSecurity. If you are not able to see much feedback texts, please say so and end the summary, don't make up anything.\n\n"
+                "Analyze both positive and negative feedback, and summarize notable positive and negative comments if applicable. "
+                "Do not use any headings.\n\n"
+                "Additionally, include an analysis of uninstall feedback specific to this feature, covering general themes in "
+                "'uninstall_text_feedback' and 'uninstall_feedback_value'.\n\n"
+                "At the end of your summary, quote some notable feedback comments (both positive and negative) that significantly impacted your summarizing process. Make sure these comments are translated to ENGLISH.\n\n"
+                f"Feature Feedback:\n" + "\n".join(map(str, feature_feedback)) + "\n\n"
+                f"Uninstall Feedback:\n" + "\n".join(map(str, uninstall_feedback)) + "\n\n"
+                f"Uninstall Feedback Values:\n" + "\n".join(map(str, uninstall_values))
+            )
+
+            response = _client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {
+                        "role": "system", 
+                        "content": (
+                            "You are an expert analyzer of customer feedback for Norton CyberSecurity. Generate concise, insightful "
+                            "summaries for app feedback and uninstall themes. Avoid using any headings in your responses, and structure the analysis as a chatbot response."
+                        )
+                    },
+                    {"role": "user", "content": summary_prompt}
+                ],
+                temperature=0.1,
+                n=1
+            )
+            ai_summary = response.choices[0].message.content.strip()
+
+            ai_analysis.append({
+                'version_app': version_app,  
+                'Feature': feature, 
+                'Mean App Rating': mean_rating, 
+                'Fresh Installs': fresh_installs,
+                'Migrated Installs': migrated_installs,
+                'Positive': positive_count,
+                'Neutral': neutral_count,
+                'Negative': negative_count,
+                'AI Summary': ai_summary,
+            })
+    
+    return pd.DataFrame(ai_analysis)
+
+downloads_folder = os.path.join(os.path.expanduser("~"), "Downloads")
+
+@st.cache_data
+def save_uploaded_csv(df):
+    csv_path = os.path.join(downloads_folder, "uploaded_feedback_data.csv")
+    df.to_csv(csv_path, index=False)
+    return csv_path
+
+@st.cache_data
+def save_summaries_to_txt(summaries_dict):
+    summaries_path = os.path.join(downloads_folder, "generated_feedback_summaries.txt")
+    with open(summaries_path, "w") as file:
+        for category, summary in summaries_dict.items():
+            file.write(f"Category: {category}\n")
+            file.write(f"Summary:\n{summary}\n")
+            file.write("\n" + "="*40 + "\n\n")  
+    return summaries_path
+
 with tab3:
     uploaded_file = st.file_uploader("Upload pre-categorized feedback CSV", type=["csv"])
+    
     if uploaded_file is not None:
         df = pd.read_csv(uploaded_file)
         if 'Feature Category' not in df.columns or 'Sentiment' not in df.columns:
             st.error("The uploaded CSV must contain 'Feature Category' and 'Sentiment' columns.")
         else:
+            csv_file_path = save_uploaded_csv(df)
             st.session_state['results_df'] = df  
             st.write("Feedback Categorization and Sentiment Analysis:")
             st.write(df)
@@ -242,19 +314,191 @@ with tab3:
             sentiment_counts = df['Sentiment'].value_counts()
             st.write("Sentiment Category Counts:")
             st.write(sentiment_counts)
+            mean_ratings = df.groupby('Feature Category')['score'].mean()
+            st.write("Mean App Ratings by Feature Category")
+            st.bar_chart(mean_ratings)
+            st.write("Trend of Mean App Ratings by Feature Category Over Time")
+            df['date_ymd'] = pd.to_datetime(df['date_ymd'])
+            df['week'] = df['date_ymd'].dt.to_period('W').apply(lambda r: r.start_time)
+            df = df.sort_values(by=['week', 'Feature Category'])
+            trend_data = (
+                df.groupby(['Feature Category', 'week'])
+                .apply(lambda x: pd.Series({
+                    'Cumulative Mean Rating': x['score'].expanding().mean().iloc[-1]
+                }))
+                .reset_index()
+            )
+            trend_pivot = trend_data.pivot(index='week', columns='Feature Category', values='Cumulative Mean Rating')
+            st.line_chart(trend_pivot)
 
-            if 'category_tables' not in st.session_state:
-                st.session_state['category_tables'] = {}
-            for category in df['Feature Category'].unique():
-                category_rows = df[df['Feature Category'] == category]
-                relevant_columns = [
-                    'aiid', 'version_app', 'version', 'architecture', 'city', 
-                    'region', 'country', 'uninstall_text_feedback', 'uninstall_feedback_value'
+            last_4_weeks = trend_pivot.iloc[-4:] 
+            st.write("Cumulative Weekly Trend of Mean App Ratings by Feature Category (Last 3 Weeks)")
+            st.line_chart(last_4_weeks)
+
+            df['date_ymd'] = pd.to_datetime(df['date_ymd'])
+            df['week'] = df['date_ymd'] - pd.to_timedelta((df['date_ymd'].dt.dayofweek - 2) % 7, unit='d')
+            df = df.sort_values(by=['week', 'Feature Category'])
+            trend_data = (
+                df.groupby(['Feature Category', 'week'])
+                .apply(lambda x: pd.Series({
+                    'Cumulative Mean Rating': x['score'].expanding().mean().iloc[-1]
+                }))
+                .reset_index()
+            )
+            trend_pivot = trend_data.pivot(index='week', columns='Feature Category', values='Cumulative Mean Rating')
+            st.write("Weekly Basis - Mean App Ratings by Feature Category")
+            st.line_chart(trend_pivot)
+            last_3_weeks = trend_pivot.iloc[-4:]
+            st.write("Weekly Basis - Mean App Ratings by Feature Category (Last 3 Weeks)")
+            st.line_chart(last_3_weeks)
+            df['date_ymd'] = pd.to_datetime(df['date_ymd'])
+            df['week'] = df['date_ymd'] - pd.to_timedelta((df['date_ymd'].dt.dayofweek - 2) % 7, unit='d')
+            df = df.sort_values(by=['week', 'Feature Category'])
+            df['Cumulative Mean Rating'] = df.groupby('Feature Category')['score'].expanding().mean().reset_index(level=0, drop=True)
+            trend_data = df.groupby(['week', 'Feature Category']).agg({'Cumulative Mean Rating': 'last'}).reset_index()
+            trend_pivot = trend_data.pivot(index='week', columns='Feature Category', values='Cumulative Mean Rating')
+            st.write("Cumulative Weekly Trend of Mean App Ratings by Feature Category")
+            st.line_chart(trend_pivot)
+            last_3_weeks = trend_pivot.iloc[-4:]
+            st.write("Cumulative Weekly Trend of Mean App Ratings by Feature Category (Last 3 Weeks)")
+            st.line_chart(last_3_weeks)
+
+            def calculate_feature_category_stats(filtered_df):
+                filtered_df['cookie_label'] = filtered_df['aiid'].apply(map_aiid_to_label)
+                category_stats = (
+                    filtered_df.groupby('Feature Category').apply(
+                        lambda group: pd.Series({
+                            "Average Rating Score": group['score'].mean(),
+                            "Avg Fresh Score": group.loc[group['cookie_label'] == 'Fresh Installs', 'score'].mean() if not group.loc[group['cookie_label'] == 'Fresh Installs', 'score'].empty else None,
+                            "Avg Migrated Score": group.loc[group['cookie_label'] == 'Migrated Installs', 'score'].mean() if not group.loc[group['cookie_label'] == 'Migrated Installs', 'score'].empty else None,
+                            "User Count": group['score'].size,
+                            "Fresh Install Count": (group['cookie_label'] == 'Fresh Installs').sum(),
+                            "Migrated Install Count": (group['cookie_label'] == 'Migrated Installs').sum(),
+                        })
+                    ).reset_index()
+                )
+                category_stats.columns = [
+                    'Feature Category', 
+                    'Average Rating Score', 
+                    'Avg Fresh Score', 
+                    'Avg Migrated Score', 
+                    'User Count', 
+                    'Fresh Install Count', 
+                    'Migrated Install Count'
                 ]
-                category_table = category_rows[['text_feedback', 'Sentiment', 'Feature Category', *relevant_columns]]
-                st.session_state['category_tables'][category] = category_table
+                category_stats = category_stats.sort_values(by='Feature Category')
+                return category_stats
+            df['date_ymd'] = pd.to_datetime(df['date_ymd'])
+            last_4_months_start = df['date_ymd'].max() - pd.DateOffset(months=4)
+            last_4_months_df = df[df['date_ymd'] >= last_4_months_start]
+            last_3_weeks_start = df['date_ymd'].max() - pd.DateOffset(weeks=3)
+            last_3_weeks_df = df[df['date_ymd'] >= last_3_weeks_start]
+            overall_stats = calculate_feature_category_stats(df)
+            st.write("Feature Category Statistics (Overall)")
+            st.dataframe(overall_stats)
+            last_4_months_stats = calculate_feature_category_stats(last_4_months_df)
+            st.write("Feature Category Statistics (Last 4 Months)")
+            st.dataframe(last_4_months_stats)
+            last_3_weeks_stats = calculate_feature_category_stats(last_3_weeks_df)
+            st.write("Feature Category Statistics (Last 3 Weeks)")
+            st.dataframe(last_3_weeks_stats)
+
+            df['date_ymd'] = pd.to_datetime(df['date_ymd'])
+            unique_feature_categories = sorted(df['Feature Category'].dropna().unique())
+            select_all_feature_categories = st.checkbox("Select all Feature Categories", key="select_all_feature_categories")
+            if select_all_feature_categories:
+                selected_feature_categories = unique_feature_categories
+            else:
+                selected_feature_categories = st.multiselect(
+                    "Select Feature Categories",
+                    options=unique_feature_categories,
+                    default=[],
+                    key="filter_feature_categories"
+                )
+            filtered_df = (
+                df[df['Feature Category'].isin(selected_feature_categories)]
+                if selected_feature_categories else df
+            )
+            filtered_df['week'] = filtered_df['date_ymd'] - pd.to_timedelta(
+                (filtered_df['date_ymd'].dt.dayofweek - 2) % 7, unit='d'
+            )
+            filtered_df = filtered_df.sort_values(by=['week', 'Feature Category'])
+            trend_data = (
+                filtered_df.groupby(['Feature Category', 'week'])
+                .apply(lambda x: pd.Series({
+                    'Cumulative Mean Rating': x['score'].expanding().mean().iloc[-1]
+                }))
+                .reset_index()
+            )
+            trend_pivot = trend_data.pivot(index='week', columns='Feature Category', values='Cumulative Mean Rating')
+            st.write("Weekly Basis - Mean App Ratings by Feature Category")
+            st.line_chart(trend_pivot)
+            last_3_weeks = trend_pivot.iloc[-4:]
+            st.write("Weekly Basis - Mean App Ratings by Feature Category (Last 3 Weeks)")
+            st.line_chart(last_3_weeks)
+            filtered_df['Cumulative Mean Rating'] = (
+                filtered_df.groupby('Feature Category')['score']
+                .expanding().mean().reset_index(level=0, drop=True)
+            )
+            trend_data_cumulative = (
+                filtered_df.groupby(['week', 'Feature Category'])
+                .agg({'Cumulative Mean Rating': 'last'})
+                .reset_index()
+            )
+            trend_pivot_cumulative = trend_data_cumulative.pivot(
+                index='week', columns='Feature Category', values='Cumulative Mean Rating'
+            )
+            st.write("Cumulative Weekly Trend of Mean App Ratings by Feature Category")
+            st.line_chart(trend_pivot_cumulative)
+            last_3_weeks_cumulative = trend_pivot_cumulative.iloc[-4:]
+            st.write("Cumulative Weekly Trend of Mean App Ratings by Feature Category (Last 3 Weeks)")
+            st.line_chart(last_3_weeks_cumulative)
+            feature_analysis = get_feature_analysis(df, client)
+            sorted_versions = sorted(df['version_app'].unique(), reverse=True)
+            for version_app in sorted_versions: 
+                st.write(f"### App Version: {version_app}")
+                version_analysis = feature_analysis[feature_analysis['version_app'] == version_app][
+                    ['Feature', 'Mean App Rating', 'Fresh Installs', 'Migrated Installs', 'Positive', 'Neutral', 'Negative', 'AI Summary']
+                ]
+                fresh_installs_sum = version_analysis['Fresh Installs'].sum()
+                migrated_installs_sum = version_analysis['Migrated Installs'].sum()
+                positive_sum = version_analysis['Positive'].sum()
+                neutral_sum = version_analysis['Neutral'].sum()
+                negative_sum = version_analysis['Negative'].sum()
+                summary_row = pd.DataFrame({
+                    'Feature': ['Total'],
+                    'Mean App Rating': [""],
+                    'Fresh Installs': [fresh_installs_sum],
+                    'Migrated Installs': [migrated_installs_sum],
+                    'Positive': [positive_sum],
+                    'Neutral': [neutral_sum],
+                    'Negative': [negative_sum],
+                    'AI Summary': [""]
+                })
+                version_analysis = pd.concat([version_analysis, summary_row], ignore_index=True)
+                st.dataframe(version_analysis)
+            relevant_columns = [
+                            'date_ymd', 'event_timestamp_local', 'score', 'aiid', 'version_app', 'version',
+                            'architecture', 'city', 'region', 'country', 'uninstall_text_feedback', 'uninstall_feedback_value'
+            ]
+            if 'category_tables' not in st.session_state:
+                @st.cache_data
+                def generate_category_tables(df):
+                    category_tables = {}
+                    for category in df['Feature Category'].unique():
+                        category_rows = df[df['Feature Category'] == category]
+                        relevant_columns = [
+                            'date_ymd', 'event_timestamp_local', 'score', 'aiid', 'version_app', 'version',
+                            'architecture', 'city', 'region', 'country', 'uninstall_text_feedback', 'uninstall_feedback_value'
+                        ]
+                        category_table = category_rows[['text_feedback', 'Sentiment', 'Feature Category', *relevant_columns]]
+                        category_tables[category] = category_table
+                    return category_tables
+                st.session_state['category_tables'] = generate_category_tables(df)
+
+            for category, table in st.session_state['category_tables'].items():
                 st.write(f"Category Feedback Table for '{category}':")
-                st.dataframe(category_table)
+                st.dataframe(table)
 
             @st.cache_data
             def get_category_analysis(category, feedback_rows, feedback_column):
@@ -293,10 +537,11 @@ with tab3:
                         {"role": "system", "content": "You are an expert analyst for going through customer feedback along with their customer data and generating detailed insights based on all their data."},
                         {"role": "user", "content": explanation_prompt}
                     ],
-                    temperature=0.2,
+                    temperature=0.1,
                     n=1
                 )
-                return response.choices[0].message.content.strip()
+                return response.choices[0].message.content
+
 
             @st.cache_data
             def plot_stacked_bar_chart(results_df):
@@ -304,208 +549,61 @@ with tab3:
                 st.bar_chart(category_sentiment_counts)
 
             plot_stacked_bar_chart(df)
-            st.download_button("Download Analysis", df.to_csv(index=False), file_name="analysis_with_categories.csv")
+            # st.download_button("Download Analysis", df.to_csv(index=False), file_name="analysis_with_categories.csv")
 
-            if 'categories_analysis' not in st.session_state:
-                st.session_state['categories_analysis'] = {}
-            for category in df['Feature Category'].unique():
-                if category not in st.session_state['categories_analysis']:
+            @st.cache_data
+            def generate_categories_analysis(df):
+                categories_analysis = {}
+                for category in df['Feature Category'].unique():
                     category_rows = df[df['Feature Category'] == category]
-                    st.session_state['categories_analysis'][category] = get_category_analysis(category, category_rows, 'text_feedback')
+                    categories_analysis[category] = get_category_analysis(category, category_rows, 'text_feedback')
+                return categories_analysis
+
+            
+            if 'categories_analysis' not in st.session_state:
+                st.session_state['categories_analysis'] = generate_categories_analysis(df)
 
             st.write("Detailed Analysis for Each Feedback Category:")
             for category, analysis in st.session_state['categories_analysis'].items():
                 with st.expander(f"Category: {category}"):
                     st.write(analysis)
+
+            summaries_path = save_summaries_to_txt(st.session_state['categories_analysis'])
+
             if 'pdf_file_path' not in st.session_state:
                 pdf_file_path = generate_feedback_pdf(st.session_state['categories_analysis'])
                 st.session_state['pdf_file_path'] = pdf_file_path
-            with open(st.session_state['pdf_file_path'], "rb") as pdf_file:
-                st.download_button(
-                    label="Download Feedback Analysis PDF",
-                    data=pdf_file,
-                    file_name="feedback_analysis.pdf",
-                    mime="application/pdf",
-                    key="pdf_download"
-                )
+
+            # with open(st.session_state['pdf_file_path'], "rb") as pdf_file:
+            #     st.download_button(
+            #         label="Download Feedback Analysis PDF",
+            #         data=pdf_file,
+            #         file_name="feedback_analysis.pdf",
+            #         mime="application/pdf",
+            #         key="pdf_download"
+            #     )
+
+            def find_file(file_name, search_path):
+                for root, dirs, files in os.walk(search_path):
+                    if file_name in files:
+                        return os.path.join(root, file_name)
+                return None
+            file_to_run = "Another_AI_Test.py"
+            search_root = os.path.expanduser("~")  
+            file_path = find_file(file_to_run, search_root)
+
+            if st.button("Open Feedback Insight Chat"):
+                if file_path:
+                    print(f"Found file: {file_path}")
+                    subprocess.Popen(["streamlit", "run", file_path])
+                else:
+                    print(f"File '{file_to_run}' not found in {search_root}.")
+
+            # if st.button("Open Feedback Insight Chat"):
+            #    subprocess.Popen(["streamlit", "run", "/Users/aravind.vijayaraghav/Documents/Data_AI_ML/Another_AI_Test.py"])
+            #    st.rerun()
     else:
         st.write("Please upload a pre-categorized feedback CSV to proceed.")
-
-float_init(theme=True, include_unstable_primary=False)
-
-def chat_content():
-    st.session_state['chat_history'].append(st.session_state['content'])
-
-with tab4:
-    st.title("Feedback Insight Chat")
-    if 'chat_history' not in st.session_state:
-        st.session_state['chat_history'] = []
-    if 'categories_analysis' not in st.session_state or not st.session_state['categories_analysis']:
-        st.write("No feedback summaries available. Please visit the 'Feedback Categorization' tab first.")
-    else:
-        if 'category_tables' not in st.session_state:
-            st.session_state['category_tables'] = {}
-        if 'load_state' not in st.session_state:    
-            st.session_state['load_state'] = False  
-        if not st.session_state['load_state']:  
-            for category in st.session_state['categories_analysis'].keys():
-                category_rows = df[df['Feature Category'] == category]
-                st.session_state['category_tables'][category] = category_rows[['text_feedback', 'Sentiment', 'Feature Category', 'aiid', 'version_app', 'version', 'architecture', 'city', 'region', 'country']]
-            st.session_state['load_state'] = True  
-
-        col1, = st.columns(1)
-        with col1:
-            with st.container(border=True):
-                if 'messages' not in st.session_state:
-                    st.session_state.messages = []
-
-                with st.container():
-                    st.chat_input(key='content', on_submit=chat_content) 
-                    button_b_pos = "3rem"
-                    button_css = float_css_helper(width="2.2rem", bottom=button_b_pos, transition=0)
-                    float_parent(css=button_css)
-                for message in st.session_state.messages:
-                    with st.chat_message(message["role"]):
-                        st.markdown(message["content"])
-                prompt = st.session_state.get('content')
-                if prompt:
-                    st.session_state.messages.append({"role": "user", "content": prompt})
-                    with st.chat_message("user"):
-                        st.markdown(prompt)
-                    summary_info = "\n".join([f"Category: {category}. Summary: {summary}" 
-                                              for category, summary in st.session_state['categories_analysis'].items()])
-                    
-                    system_message = {
-                        "role": "system", 
-                        "content": (
-                            "You are a highly intelligent assistant specializing in analyzing customer feedback data for Norton CyberSecurity. "
-                            "Your role is to answer questions thoroughly and accurately by analyzing the feedback category tables and generated summaries. "
-                            "Prioritize relevant tables for answers, and always examine the tables first when asked specific questions. "
-                            "If asked for specific data, insights, or quotes, retrieve them directly from the category tables and avoid summarizing unnecessarily. "
-                            "When responding to general, unrelated, or casual questions (such as greetings or non-feedback topics), reply conversationally without referencing feedback data."
-                        )
-                    }
-
-                    user_message = {
-                    "role": "user", 
-                    "content": (
-                        f"This is the session's conversation history so far: {st.session_state.messages}\n\n"
-                        f"### User Question:\n"
-                        f"{prompt}\n\n"
-                        f"### Response Instructions:\n"
-                        f"- **For Specific Data Requests**: If the user is asking for a list, specific rows, or data points (e.g., 'Show me 20 feedback entries' or 'List feedback from city X'), "
-                        f"retrieve that data directly from the category tables and present it clearly. Do not summarize unless explicitly asked.\n"
-                        f"- **For Trends or Insights**: Thoroughly analyze the category tables first. Look for patterns, common trends, or correlations, and explain the insights in a concise way. "
-                        f"Then review any generated summaries to add additional context. Base your answer primarily on the tables, then refer to the summaries only for added context.\n"
-                        f"- **For Mixed Questions**: If a question involves both specific data and trends (e.g., 'List entries for category X and analyze trends'), respond by first providing the requested data entries, then "
-                        f"follow with a deeper analysis of trends.\n\n"
-                        f"### Feedback Data:\n"
-                        f"- **Category Tables**: Use the following tables to retrieve data or analyze trends:\n"
-                        f"{st.session_state['category_tables'].items()}\n\n"
-                        f"- **Generated Summaries**: Refer to these only for context when necessary:\n"
-                        f"{summary_info}\n\n"
-                        f"Installation type context based on aiid - If the user asks about fresh or migrated installs refer to the aiid and this context: {installation_type_context}\n"
-                        f"### Dataset Summary (for context):\n"
-                        f"{dataset_summary}\n\n"
-                        f"### Answer Structure:\n"
-                        f"- **Straightforward Response**: If the user asks for specific feedback entries or data, provide it directly and accurately. Avoid unnecessary summaries.\n"
-                        f"- **In-depth Analysis**: When asked for insights or trends, first analyze the feedback tables, then cross-reference the summaries if needed. Ensure your response is thoughtful and evidence-backed."
-                    )
-                    }
-
-                    with st.chat_message("assistant"):
-                        stream = client.chat.completions.create(
-                            model=st.session_state["azure_openai_model"],
-                            messages=[
-                                {"role": "system", "content": system_message["content"]}, 
-                                {"role": "user", "content": user_message["content"]}
-                            ],
-                            stream=True,
-                            temperature=0.2
-                        )
-                        response = st.write_stream(stream)
-                    st.session_state.messages.append({"role": "assistant", "content": response})
-# with tab4:
-#     st.title("Feedback Insight Chat")
-
-#     prompt = st.chat_input("Ask a question about the feedback analysis:")
-#     if 'chat_history' not in st.session_state:
-#         st.session_state['chat_history'] = []
-#     if 'categories_summary' not in st.session_state or not st.session_state['categories_summary']:
-#         st.write("No feedback summaries available. Please visit the 'Feedback Categorization' tab first.")
-#     else:
-#         if 'category_tables' not in st.session_state:
-#             st.session_state['category_tables'] = {}
-#         if 'load_state' not in st.session_state:    
-#             st.session_state['load_state'] = False  
-#         if not st.session_state['load_state']:  
-#             for category in st.session_state['categories_summary'].keys():
-#                 category_rows = df[df['Feature Category'] == category]
-#                 st.session_state['category_tables'][category] = category_rows[['text_feedback', 'Sentiment', 'Feature Category', 'aiid', 'version_app', 'version', 'architecture', 'city', 'region', 'country']]
-#             st.session_state['load_state'] = True  
-        
-#         if "messages" not in st.session_state:
-#             st.session_state.messages = []
-
-#         for message in st.session_state.messages:
-#             with st.chat_message(message["role"]):
-#                 st.markdown(message["content"])
-
-#         if prompt :
-#             st.session_state.messages.append({"role": "user", "content": prompt})
-            
-#             with st.chat_message("user"):
-#                 st.markdown(prompt)
-
-#             summary_info = "\n".join([f"Category: {category}. Summary: {summary}" 
-#                                     for category, summary in st.session_state['categories_summary'].items()])
-#             tables_info = "\n".join([f"Category: {category}. Table:\n{table}" 
-#                                     for category, table in st.session_state['category_tables'].items()])
-            
-#             system_message = {
-#                 "role": "system", 
-#                 "content": (
-#                     "You are an insight generator for Norton CyberSecurity. Your job is to answer questions concisely based on customer feedback and the feedback tables. "
-#                     "If the user's question is unrelated to feedback or is general in nature (such as greetings or casual conversation), "
-#                     "respond conversationally without referencing the feedback summaries. Use the feature category tables mostly. Use summarized feedback data only when directly relevant."
-#                 )
-#             }
-
-#             user_message = {
-#                 "role": "user", 
-#                 "content": (
-#                     f"### User Question:\n"
-#                     f"{prompt}\n\n"
-#                     f"### Context:\n"
-#                     f"Look for common trends across categories and provide relevant feedback quotes to support the insights. "
-#                     f"For each insight, include 2-3 quotes from the feedback that justify your conclusions. "
-#                     f"Reference specific feedback categories and trends in your response.\n\n"
-#                     f"### Feature Category Tables (Including Feedback Quotes):\n"
-#                     f"{tables_info}\n\n"
-#                     f"### Summarized Feedback Data:\n"
-#                     f"{summary_info}\n\n"
-#                     f"### Answer Format:\n"
-#                     f"- **Brief and Clear**: Start with a decently sized summary of the most relevant insights.\n"
-#                     f"- **Link to Feedback**: Mention the specific category or categories related to the question.\n"
-#                     f"- **Quotes as Evidence**: For each insight or trend, provide 2-3 quotes from the feedback to back up your analysis.\n"
-#                     f"- **Avoid Unnecessary Details**: Focus only on the relevant insights from the feedback summaries, and keep your response brief."
-#                 )
-#             }
-#             with st.chat_message("assistant"):
-#                 stream = client.chat.completions.create(
-#                     model=st.session_state["azure_openai_model"],
-#                     messages=[
-#                         {"role": "system", "content": system_message["content"]}, 
-#                         {"role": "user", "content": user_message["content"]}
-#                     ],
-#                     stream=True,
-#                     temperature=0.2
-#                 )
-#                 response = st.write_stream(stream)
-#             st.session_state.messages.append({"role": "assistant", "content": response})
-
-    
-
 
 clients = bigquery.Client(project='ppp-cdo-rep-ext-6c')
 downloads_path = str(pathlib.Path.home() / "Downloads")
@@ -678,7 +776,7 @@ def get_final_summary(aggregated_summary,user_question):
             {"role": "user", "content": prompt}
         ],
         max_tokens=1000,
-        temperature=0.3,
+        temperature=0.1,
         n=1
     )
     return response.choices[0].message.content.strip()
@@ -711,7 +809,12 @@ def set_chat_styles():
     )
 @st.cache_data
 def analyze_feedback(row, _client, feedback_column):
-    install_type = "FRESH" if row['aiid'] == 'mmm_prw_tst_007_498_c' else "MIGRATED" if row['aiid'] == 'mmm_n36_mig_000_888_m' else "Unknown"
+    install_type = (
+        "FRESH" if not row['aiid'] or pd.isna(row['aiid']) or row['aiid'] == '' 
+        else "FRESH" if row['aiid'] == 'mmm_prw_tst_007_498_c' 
+        else "MIGRATED" if row['aiid'] == 'mmm_n36_mig_000_888_m' 
+        else "Unknown"
+    )
     feedback_text = row[feedback_column]
     relevant_columns = ['uninstall_text_feedback','uninstall_feedback_value','aiid', 'version_app', 'version', 'architecture', 'city', 'region', 'country']
     column_values = ', '.join([f"{col}: {row[col]}" for col in relevant_columns if col in row and pd.notnull(row[col])])
@@ -784,16 +887,19 @@ if 'pdf_file' not in st.session_state:
     st.session_state['pdf_file'] = None
 @st.cache_data
 def plot_plotly_heatmap(data, title):
+    data_numeric = data.apply(pd.to_numeric, errors='coerce').fillna(0)
+
     fig = go.Figure(data=go.Heatmap(
-        z=data.values,
-        x=data.columns,
-        y=data.index,
+        z=data_numeric.values,
+        x=data_numeric.columns,
+        y=data_numeric.index,
         colorscale='YlGnBu',
-        zmin=data.values.min(),
-        zmax=data.values.max(),
-        text=data.round(2).astype(str),
+        zmin=data_numeric.values.min(),
+        zmax=data_numeric.values.max(),
+        text=data_numeric.round(2).astype(str),
         hoverinfo="text"
     ))
+
     fig.update_layout(
         title=title,
         xaxis_title='Category',
@@ -801,6 +907,7 @@ def plot_plotly_heatmap(data, title):
         xaxis_tickangle=45
     )
     return fig
+
 @st.cache_data
 def plot_plotly_line(data, title):
     fig = px.line(
@@ -835,13 +942,18 @@ def get_visualization_details(vis_data):
         summary_stats = vis_data.describe().to_string()
         key_metrics = f"Min: {vis_data.min()}, Max: {vis_data.max()}, Std: {vis_data.std()}"
         data_string = f"Summary Statistics:\n{summary_stats}\n\nKey Metrics:\n{key_metrics}"
+    elif isinstance(vis_data, pd.DataFrame):
+        overall_summary = vis_data.describe().to_string()
+        data_string = (
+            f"Overall Summary Statistics:\n{overall_summary}\n\n"
+            f"Full Data:\n{vis_data.head().to_string()}\n\n(Note: Displaying top rows)"
+        )
     else:
         row_means = vis_data.mean(axis=1).to_string()
         col_means = vis_data.mean(axis=0).to_string()
         data_string = (f"Row Means:\n{row_means}\n\nColumn Means:\n{col_means}\n\n"
                     f"Full Data:\n{vis_data.to_string()}")
     return data_string
-
 with tab0:
     st.header("Automatic Insights and Visualization 🤖")
     df = pd.read_csv(output_csv_path)
@@ -870,6 +982,147 @@ with tab0:
     end_date = st.date_input("End Date", df['event_timestamp_local'].max().date())
     filtered_df = filtered_df[(filtered_df['event_timestamp_local'] >= pd.Timestamp(start_date)) &
                             (filtered_df['event_timestamp_local'] <= pd.Timestamp(end_date))]
+    filtered_df['cookie_label'] = filtered_df['aiid'].apply(map_aiid_to_label)
+    st.write("Average Rating Score, User Count, and Install Counts by App Version")
+    version_stats = (
+        filtered_df.groupby('version_app').apply(
+            lambda group: pd.Series({
+                "Average Rating Score": group['score'].mean(),
+                "Avg Fresh Score": group.loc[group['cookie_label'] == 'Fresh Installs', 'score'].mean() if not group.loc[group['cookie_label'] == 'Fresh Installs', 'score'].empty else None,
+                "Avg Migrated Score": group.loc[group['cookie_label'] == 'Migrated Installs', 'score'].mean() if not group.loc[group['cookie_label'] == 'Migrated Installs', 'score'].empty else None,
+                "User Count": group['score'].size,
+                "Fresh Install Count": (group['cookie_label'] == 'Fresh Installs').sum(),
+                "Migrated Install Count": (group['cookie_label'] == 'Migrated Installs').sum(),
+            })
+        ).reset_index()
+    )
+    version_stats.columns = [
+        'App Version', 
+        'Average Rating Score', 
+        'Avg Fresh Score', 
+        'Avg Migrated Score', 
+        'User Count', 
+        'Fresh Install Count', 
+        'Migrated Install Count'
+    ]
+    version_stats = version_stats.sort_values(by='App Version', ascending=False)
+    st.dataframe(version_stats)
+
+    df['date_ymd'] = pd.to_datetime(df['date_ymd'])
+    last_4_months_start = df['date_ymd'].max() - pd.DateOffset(months=4)
+    last_4_months_df = df[df['date_ymd'] >= last_4_months_start]
+    last_3_weeks_start = df['date_ymd'].max() - pd.DateOffset(weeks=3)
+    last_3_weeks_df = df[df['date_ymd'] >= last_3_weeks_start]
+    def calculate_version_stats(filtered_df):
+        filtered_df['cookie_label'] = filtered_df['aiid'].apply(map_aiid_to_label)
+        version_stats = (
+            filtered_df.groupby('version_app').apply(
+                lambda group: pd.Series({
+                    "Average Rating Score": group['score'].mean(),
+                    "Avg Fresh Score": group.loc[group['cookie_label'] == 'Fresh Installs', 'score'].mean() if not group.loc[group['cookie_label'] == 'Fresh Installs', 'score'].empty else None,
+                    "Avg Migrated Score": group.loc[group['cookie_label'] == 'Migrated Installs', 'score'].mean() if not group.loc[group['cookie_label'] == 'Migrated Installs', 'score'].empty else None,
+                    "User Count": group['score'].size,
+                    "Fresh Install Count": (group['cookie_label'] == 'Fresh Installs').sum(),
+                    "Migrated Install Count": (group['cookie_label'] == 'Migrated Installs').sum(),
+                })
+            ).reset_index()
+        )
+        version_stats.columns = [
+            'App Version', 
+            'Average Rating Score', 
+            'Avg Fresh Score', 
+            'Avg Migrated Score', 
+            'User Count', 
+            'Fresh Install Count', 
+            'Migrated Install Count'
+        ]
+        version_stats = version_stats.sort_values(by='App Version', ascending=False)
+        return version_stats
+    last_4_months_stats = calculate_version_stats(last_4_months_df)
+    st.write("App Version Statistics (Last 4 Months)")
+    st.dataframe(last_4_months_stats)
+    last_3_weeks_stats = calculate_version_stats(last_3_weeks_df)
+    st.write("App Version Statistics (Last 3 Weeks)")
+    st.dataframe(last_3_weeks_stats)
+    
+    filtered_df['date_ymd'] = pd.to_datetime(filtered_df['date_ymd'])
+    filtered_df['week'] = filtered_df['date_ymd'] - pd.to_timedelta((filtered_df['date_ymd'].dt.dayofweek - 2) % 7, unit='d')
+    weekly_version_stats = (
+        filtered_df.groupby(['version_app', 'week']).apply(
+            lambda group: pd.Series({
+                "Weekly Average Rating Score": group['score'].mean()
+            })
+        ).reset_index()
+    )
+    weekly_pivot = weekly_version_stats.pivot(index='week', columns='version_app', values='Weekly Average Rating Score')
+    st.write("Weekly Trend of Average Rating Score by App Version")
+    st.line_chart(weekly_pivot)
+    latest_weeks = weekly_version_stats['week'].drop_duplicates().nlargest(4)
+    last_3_weeks_stats = weekly_version_stats[weekly_version_stats['week'].isin(latest_weeks)]
+    weekly_pivot_last_3_weeks = last_3_weeks_stats.pivot(index='week', columns='version_app', values='Weekly Average Rating Score')
+    st.write("Weekly Trend of Average Rating Score by App Version (Last 3 Weeks)")
+    st.line_chart(weekly_pivot_last_3_weeks)
+    filtered_df['date_ymd'] = pd.to_datetime(filtered_df['date_ymd'])
+    filtered_df['week'] = filtered_df['date_ymd'] - pd.to_timedelta((filtered_df['date_ymd'].dt.dayofweek - 2) % 7, unit='d')
+    filtered_df = filtered_df.sort_values(by=['week', 'version_app'])
+    filtered_df['Cumulative Mean Rating'] = filtered_df.groupby('version_app')['score'].expanding().mean().reset_index(level=0, drop=True)
+    weekly_version_stats = filtered_df.groupby(['week', 'version_app']).agg({'Cumulative Mean Rating': 'last'}).reset_index()
+    weekly_pivot = weekly_version_stats.pivot(index='week', columns='version_app', values='Cumulative Mean Rating')
+    st.write("Cumulative Weekly Trend of Average Rating Score by App Version")
+    st.line_chart(weekly_pivot)
+    latest_weeks = weekly_version_stats['week'].drop_duplicates().nlargest(4)
+    last_4_weeks_stats = weekly_version_stats[weekly_version_stats['week'].isin(latest_weeks)]
+    weekly_pivot_last_3_weeks = last_4_weeks_stats.pivot(index='week', columns='version_app', values='Cumulative Mean Rating')
+    st.write("Cumulative Weekly Trend of Average Rating Score by App Version (Last 3 Weeks)")
+    st.line_chart(weekly_pivot_last_3_weeks)
+
+
+    select_all_version_app = st.checkbox("Select all App Versions", key="select_all_version_app_unique_key")
+    unique_version_apps = sorted(filtered_df['version_app'].dropna().unique())
+    if select_all_version_app:
+        selected_version_apps = unique_version_apps
+    else:
+        selected_version_apps = st.multiselect(
+            "Select App Versions", 
+            options=unique_version_apps, 
+            default=[], 
+            key="filter_version_app_unique_key"
+        )
+    filtered_versions_df = (
+        filtered_df[filtered_df['version_app'].isin(selected_version_apps)] 
+        if selected_version_apps else filtered_df
+    )
+    filtered_versions_df['date_ymd'] = pd.to_datetime(filtered_versions_df['date_ymd'])
+    filtered_versions_df['week'] = filtered_versions_df['date_ymd'] - pd.to_timedelta((filtered_versions_df['date_ymd'].dt.dayofweek - 2) % 7, unit='d')
+    weekly_version_stats = (
+        filtered_versions_df.groupby(['version_app', 'week'])
+        .agg({'score': 'mean'})
+        .rename(columns={'score': 'Weekly Average Rating Score'})
+        .reset_index()
+    )
+    weekly_pivot = weekly_version_stats.pivot(index='week', columns='version_app', values='Weekly Average Rating Score')
+    st.write("Weekly Trend of Average Rating Score by App Version")
+    st.line_chart(weekly_pivot)
+    latest_weeks = weekly_version_stats['week'].drop_duplicates().nlargest(4)
+    last_3_weeks_stats = weekly_version_stats[weekly_version_stats['week'].isin(latest_weeks)]
+    weekly_pivot_last_3_weeks = last_3_weeks_stats.pivot(index='week', columns='version_app', values='Weekly Average Rating Score')
+    st.write("Weekly Trend of Average Rating Score by App Version (Last 4 Weeks)")
+    st.line_chart(weekly_pivot_last_3_weeks)
+    filtered_versions_df = filtered_versions_df.sort_values(by=['week', 'version_app'])
+    filtered_versions_df['Cumulative Mean Rating'] = filtered_versions_df.groupby('version_app')['score'].expanding().mean().reset_index(level=0, drop=True)
+    cumulative_version_stats = (
+        filtered_versions_df.groupby(['week', 'version_app'])
+        .agg({'Cumulative Mean Rating': 'last'})
+        .reset_index()
+    )
+    cumulative_pivot = cumulative_version_stats.pivot(index='week', columns='version_app', values='Cumulative Mean Rating')
+    st.write("Cumulative Weekly Trend of Average Rating Score by App Version")
+    st.line_chart(cumulative_pivot)
+    latest_cumulative_weeks = cumulative_version_stats['week'].drop_duplicates().nlargest(4)
+    last_3_weeks_cumulative_stats = cumulative_version_stats[cumulative_version_stats['week'].isin(latest_cumulative_weeks)]
+    cumulative_pivot_last_3_weeks = last_3_weeks_cumulative_stats.pivot(index='week', columns='version_app', values='Cumulative Mean Rating')
+    st.write("Cumulative Weekly Trend of Average Rating Score by App Version (Last 3 Weeks)")
+    st.line_chart(cumulative_pivot_last_3_weeks)
     st.write("Time-Based Analysis")
     feedback_counts_by_date = filtered_df.groupby('date_ymd').size()
     st.write("Number of Feedbacks Over Time")
@@ -892,19 +1145,14 @@ with tab0:
     st.write("Feedback Scores by Version App")
     st.bar_chart(feedback_score_by_version_app)
     st.write("Feedback Scores by Cookie")
-    def map_aiid_to_label(aiid_value):
-        if aiid_value == 'mmm_prw_tst_007_498_c':
-            return 'Fresh Install'
-        elif aiid_value == 'mmm_n36_mig_000_888_m':
-            return 'Migrated'
-        else:
-            return 'Other'  
     filtered_df['cookie_label'] = filtered_df['aiid'].apply(map_aiid_to_label)
     feedback_score_by_cookie = filtered_df.groupby(['cookie_label', 'score']).size().unstack().fillna(0)
-    st.bar_chart(feedback_score_by_cookie)    
+    st.bar_chart(feedback_score_by_cookie) 
+
 with tab1:
     st.subheader("Insights from Visualizations")
     visualizations = {
+        "Average Rating Score and User Count by App Version": version_stats,
         "Number of Feedbacks Over Time": feedback_counts_by_date,
         "Feedback Scores Over Time": feedback_score_by_date,
         "Feedback Trends by Hour of the Day": feedback_by_hour,
@@ -914,7 +1162,8 @@ with tab1:
         "Feedback Scores by Cookie": feedback_score_by_cookie
     }
     installation_type_context = (
-        "FRESH installs = new installation without data. If aiid == 'mmm_prw_tst_007_498_c', it's a FRESH install. "
+        "FRESH installs = new installation without data. This includes cases where the 'aiid' is Unknown or empty, or if "
+        "aiid == 'mmm_prw_tst_007_498_c'. "
         "MIGRATED installs = updated software retaining old data. If aiid == 'mmm_n36_mig_000_888_m', it's a MIGRATED install."
     )
     for i, (vis_name, vis_data) in enumerate(visualizations.items()):
@@ -1000,7 +1249,7 @@ with tab1:
                 {"role": "user", "content": final_summary_prompt}
             ],
             max_tokens=4000,
-            temperature=0.5,
+            temperature=0.1,
             n=1
         )
         
@@ -1019,35 +1268,3 @@ with tab1:
         file_name="insights_report.pdf", 
         mime="application/pdf"
     )
-# with tab2:
-#     user_question = st.text_input("Ask a question about the visualizations:")
-#     if user_question:
-#         response_placeholder = st.empty()
-#         response_placeholder.write("Generating response...")
-#         if user_question in st.session_state['visual_qna_responses']:
-#             chat_response = st.session_state['visual_qna_responses'][user_question]
-#         else:
-#             all_insights_combined = "\n\n".join(f"**{name}**: {insight}" for name, insight in st.session_state['all_insights'].items())
-#             full_response = get_visual_insights_response(user_question, all_insights_combined)
-#             st.session_state['visual_qna_responses'][user_question] = full_response
-#             chat_response = ""
-#             for chunk in stream_response(full_response):
-#                 chat_response = chunk
-#                 response_placeholder.write(chat_response)
-#         response_placeholder.write(chat_response)
-
-    with tab5:
-        st.header("User Q&A Based on Large JSON File")
-        json_file_path = r'/Users/aravind.vijayaraghav/Downloads/COMPLETE_CONSUMER_LIFECYCLE.json'
-        st.write("Processing large JSON file...")
-        json_data = process_entire_json(json_file_path) 
-        aggregated_summary = aggregate_summaries(json_data)  
-        user_question = st.text_input("Ask a question about the JSON file content:")
-        if user_question:
-            st.write("Generating final response...")
-            @st.cache_data
-            def get_final_response(user_question, aggregated_summary):
-                return get_final_summary(aggregated_summary, user_question)
-            response_placeholder = st.empty()
-            final_response = get_final_response(user_question, aggregated_summary)
-            response_placeholder.write(final_response)
