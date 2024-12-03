@@ -7,7 +7,7 @@ import seaborn as sns
 from openai import AzureOpenAI
 from google.cloud import bigquery
 import pandas.tseries.offsets as offsets
-# import os
+import os
 import ssl
 from io import BytesIO
 from fpdf import FPDF
