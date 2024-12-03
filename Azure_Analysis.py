@@ -108,8 +108,8 @@ tab0,tab1,tab3= st.tabs(["Visualizations","Visualization Insight Generation", "F
 ssl._create_default_https_context = ssl._create_unverified_context
 os.environ['CURL_CA_BUNDLE'] = ''
 os.environ['REQUESTS_CA_BUNDLE'] = ''
-endpoint = st.secrets["AZURE_OPENAI_BASE"]
-api_key = st.secrets["AZURE_OPENAI_API_KEY"]
+# endpoint = st.secrets["AZURE_OPENAI_BASE"]
+# api_key = st.secrets["AZURE_OPENAI_API_KEY"]
 client = AzureOpenAI(
     api_version="2024-09-01-preview",
     azure_endpoint=endpoint,
@@ -568,7 +568,7 @@ with tab3:
                 with st.expander(f"Category: {category}"):
                     st.write(analysis)
 
-            summaries_path = save_summaries_to_txt(st.session_state['categories_analysis'])
+            # summaries_path = save_summaries_to_txt(st.session_state['categories_analysis'])
 
             if 'pdf_file_path' not in st.session_state:
                 pdf_file_path = generate_feedback_pdf(st.session_state['categories_analysis'])
