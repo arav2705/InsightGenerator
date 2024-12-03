@@ -583,21 +583,14 @@ with tab3:
             #         key="pdf_download"
             #     )
 
-            def find_file(file_name, search_path):
-                for root, dirs, files in os.walk(search_path):
-                    if file_name in files:
-                        return os.path.join(root, file_name)
-                return None
             file_to_run = "Another_AI_Test.py"
-            search_root = os.path.expanduser("~")  
-            file_path = find_file(file_to_run, search_root)
 
             if st.button("Open Feedback Insight Chat"):
-                if file_path:
-                    print(f"Found file: {file_path}")
-                    subprocess.Popen(["streamlit", "run", file_path])
-                else:
-                    print(f"File '{file_to_run}' not found in {search_root}.")
+                try:
+                    subprocess.Popen(["streamlit", "run", file_to_run])
+                    st.success("Feedback Insight Chat is opening...")
+                except Exception as e:
+                    st.error(f"An error occurred: {e}"
 
             # if st.button("Open Feedback Insight Chat"):
             #    subprocess.Popen(["streamlit", "run", "/Users/aravind.vijayaraghav/Documents/Data_AI_ML/Another_AI_Test.py"])
@@ -607,7 +600,7 @@ with tab3:
 
 clients = bigquery.Client(project='ppp-cdo-rep-ext-6c')
 downloads_path = str(pathlib.Path.home() / "Downloads")
-output_csv_path = os.path.join(downloads_path, 'rating_feedback_results.csv')
+# output_csv_path = os.path.join(downloads_path, 'rating_feedback_results.csv')
 query = """
 WITH feedback_data AS (
   SELECT DISTINCT
