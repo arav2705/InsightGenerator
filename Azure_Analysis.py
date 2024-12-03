@@ -7,7 +7,7 @@ import seaborn as sns
 from openai import AzureOpenAI
 from google.cloud import bigquery
 import pandas.tseries.offsets as offsets
-import os
+# import os
 import ssl
 from io import BytesIO
 from fpdf import FPDF
@@ -278,23 +278,23 @@ def get_feature_analysis(df, _client):
     
     return pd.DataFrame(ai_analysis)
 
-downloads_folder = os.path.join(os.path.expanduser("~"), "Downloads")
+# downloads_folder = os.path.join(os.path.expanduser("~"), "Downloads")
 
-@st.cache_data
-def save_uploaded_csv(df):
-    csv_path = os.path.join(downloads_folder, "uploaded_feedback_data.csv")
-    df.to_csv(csv_path, index=False)
-    return csv_path
+# @st.cache_data
+# def save_uploaded_csv(df):
+#     csv_path = os.path.join(downloads_folder, "uploaded_feedback_data.csv")
+#     df.to_csv(csv_path, index=False)
+#     return csv_path
 
-@st.cache_data
-def save_summaries_to_txt(summaries_dict):
-    summaries_path = os.path.join(downloads_folder, "generated_feedback_summaries.txt")
-    with open(summaries_path, "w") as file:
-        for category, summary in summaries_dict.items():
-            file.write(f"Category: {category}\n")
-            file.write(f"Summary:\n{summary}\n")
-            file.write("\n" + "="*40 + "\n\n")  
-    return summaries_path
+# @st.cache_data
+# def save_summaries_to_txt(summaries_dict):
+#     summaries_path = os.path.join(downloads_folder, "generated_feedback_summaries.txt")
+#     with open(summaries_path, "w") as file:
+#         for category, summary in summaries_dict.items():
+#             file.write(f"Category: {category}\n")
+#             file.write(f"Summary:\n{summary}\n")
+#             file.write("\n" + "="*40 + "\n\n")  
+#     return summaries_path
 
 with tab3:
     uploaded_file = st.file_uploader("Upload pre-categorized feedback CSV", type=["csv"])
@@ -304,7 +304,7 @@ with tab3:
         if 'Feature Category' not in df.columns or 'Sentiment' not in df.columns:
             st.error("The uploaded CSV must contain 'Feature Category' and 'Sentiment' columns.")
         else:
-            csv_file_path = save_uploaded_csv(df)
+            # csv_file_path = save_uploaded_csv(df)
             st.session_state['results_df'] = df  
             st.write("Feedback Categorization and Sentiment Analysis:")
             st.write(df)
