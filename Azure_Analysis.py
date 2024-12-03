@@ -321,47 +321,47 @@ with tab3:
             df['date_ymd'] = pd.to_datetime(df['date_ymd'])
             df['week'] = df['date_ymd'].dt.to_period('W').apply(lambda r: r.start_time)
             df = df.sort_values(by=['week', 'Feature Category'])
-            trend_data = (
-                df.groupby(['Feature Category', 'week'])
-                .apply(lambda x: pd.Series({
-                    'Cumulative Mean Rating': x['score'].expanding().mean().iloc[-1]
-                }))
-                .reset_index()
-            )
-            trend_pivot = trend_data.pivot(index='week', columns='Feature Category', values='Cumulative Mean Rating')
-            st.line_chart(trend_pivot)
+            # trend_data = (
+            #     df.groupby(['Feature Category', 'week'])
+            #     .apply(lambda x: pd.Series({
+            #         'Cumulative Mean Rating': x['score'].expanding().mean().iloc[-1]
+            #     }))
+            #     .reset_index()
+            # )
+            # trend_pivot = trend_data.pivot(index='week', columns='Feature Category', values='Cumulative Mean Rating')
+            # st.line_chart(trend_pivot)
 
-            last_4_weeks = trend_pivot.iloc[-4:] 
-            st.write("Cumulative Weekly Trend of Mean App Ratings by Feature Category (Last 3 Weeks)")
-            st.line_chart(last_4_weeks)
+            # last_4_weeks = trend_pivot.iloc[-4:] 
+            # st.write("Cumulative Weekly Trend of Mean App Ratings by Feature Category (Last 3 Weeks)")
+            # st.line_chart(last_4_weeks)
 
-            df['date_ymd'] = pd.to_datetime(df['date_ymd'])
-            df['week'] = df['date_ymd'] - pd.to_timedelta((df['date_ymd'].dt.dayofweek - 2) % 7, unit='d')
-            df = df.sort_values(by=['week', 'Feature Category'])
-            trend_data = (
-                df.groupby(['Feature Category', 'week'])
-                .apply(lambda x: pd.Series({
-                    'Cumulative Mean Rating': x['score'].expanding().mean().iloc[-1]
-                }))
-                .reset_index()
-            )
-            trend_pivot = trend_data.pivot(index='week', columns='Feature Category', values='Cumulative Mean Rating')
-            st.write("Weekly Basis - Mean App Ratings by Feature Category")
-            st.line_chart(trend_pivot)
-            last_3_weeks = trend_pivot.iloc[-4:]
-            st.write("Weekly Basis - Mean App Ratings by Feature Category (Last 3 Weeks)")
-            st.line_chart(last_3_weeks)
-            df['date_ymd'] = pd.to_datetime(df['date_ymd'])
-            df['week'] = df['date_ymd'] - pd.to_timedelta((df['date_ymd'].dt.dayofweek - 2) % 7, unit='d')
-            df = df.sort_values(by=['week', 'Feature Category'])
-            df['Cumulative Mean Rating'] = df.groupby('Feature Category')['score'].expanding().mean().reset_index(level=0, drop=True)
-            trend_data = df.groupby(['week', 'Feature Category']).agg({'Cumulative Mean Rating': 'last'}).reset_index()
-            trend_pivot = trend_data.pivot(index='week', columns='Feature Category', values='Cumulative Mean Rating')
-            st.write("Cumulative Weekly Trend of Mean App Ratings by Feature Category")
-            st.line_chart(trend_pivot)
-            last_3_weeks = trend_pivot.iloc[-4:]
-            st.write("Cumulative Weekly Trend of Mean App Ratings by Feature Category (Last 3 Weeks)")
-            st.line_chart(last_3_weeks)
+            # df['date_ymd'] = pd.to_datetime(df['date_ymd'])
+            # df['week'] = df['date_ymd'] - pd.to_timedelta((df['date_ymd'].dt.dayofweek - 2) % 7, unit='d')
+            # df = df.sort_values(by=['week', 'Feature Category'])
+            # trend_data = (
+            #     df.groupby(['Feature Category', 'week'])
+            #     .apply(lambda x: pd.Series({
+            #         'Cumulative Mean Rating': x['score'].expanding().mean().iloc[-1]
+            #     }))
+            #     .reset_index()
+            # )
+            # trend_pivot = trend_data.pivot(index='week', columns='Feature Category', values='Cumulative Mean Rating')
+            # st.write("Weekly Basis - Mean App Ratings by Feature Category")
+            # st.line_chart(trend_pivot)
+            # last_3_weeks = trend_pivot.iloc[-4:]
+            # st.write("Weekly Basis - Mean App Ratings by Feature Category (Last 3 Weeks)")
+            # st.line_chart(last_3_weeks)
+            # df['date_ymd'] = pd.to_datetime(df['date_ymd'])
+            # df['week'] = df['date_ymd'] - pd.to_timedelta((df['date_ymd'].dt.dayofweek - 2) % 7, unit='d')
+            # df = df.sort_values(by=['week', 'Feature Category'])
+            # df['Cumulative Mean Rating'] = df.groupby('Feature Category')['score'].expanding().mean().reset_index(level=0, drop=True)
+            # trend_data = df.groupby(['week', 'Feature Category']).agg({'Cumulative Mean Rating': 'last'}).reset_index()
+            # trend_pivot = trend_data.pivot(index='week', columns='Feature Category', values='Cumulative Mean Rating')
+            # st.write("Cumulative Weekly Trend of Mean App Ratings by Feature Category")
+            # st.line_chart(trend_pivot)
+            # last_3_weeks = trend_pivot.iloc[-4:]
+            # st.write("Cumulative Weekly Trend of Mean App Ratings by Feature Category (Last 3 Weeks)")
+            # st.line_chart(last_3_weeks)
 
             def calculate_feature_category_stats(filtered_df):
                 filtered_df['cookie_label'] = filtered_df['aiid'].apply(map_aiid_to_label)
