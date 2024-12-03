@@ -590,7 +590,7 @@ with tab3:
                     subprocess.Popen(["streamlit", "run", file_to_run])
                     st.success("Feedback Insight Chat is opening...")
                 except Exception as e:
-                    st.error(f"An error occurred: {e}"
+                    st.error(f"An error occurred: {e}")
 
             # if st.button("Open Feedback Insight Chat"):
             #    subprocess.Popen(["streamlit", "run", "/Users/aravind.vijayaraghav/Documents/Data_AI_ML/Another_AI_Test.py"])
