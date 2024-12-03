@@ -453,30 +453,30 @@ with tab3:
             last_3_weeks_cumulative = trend_pivot_cumulative.iloc[-4:]
             st.write("Cumulative Weekly Trend of Mean App Ratings by Feature Category (Last 3 Weeks)")
             st.line_chart(last_3_weeks_cumulative)
-            feature_analysis = get_feature_analysis(df, client)
-            sorted_versions = sorted(df['version_app'].unique(), reverse=True)
-            for version_app in sorted_versions: 
-                st.write(f"### App Version: {version_app}")
-                version_analysis = feature_analysis[feature_analysis['version_app'] == version_app][
-                    ['Feature', 'Mean App Rating', 'Fresh Installs', 'Migrated Installs', 'Positive', 'Neutral', 'Negative', 'AI Summary']
-                ]
-                fresh_installs_sum = version_analysis['Fresh Installs'].sum()
-                migrated_installs_sum = version_analysis['Migrated Installs'].sum()
-                positive_sum = version_analysis['Positive'].sum()
-                neutral_sum = version_analysis['Neutral'].sum()
-                negative_sum = version_analysis['Negative'].sum()
-                summary_row = pd.DataFrame({
-                    'Feature': ['Total'],
-                    'Mean App Rating': [""],
-                    'Fresh Installs': [fresh_installs_sum],
-                    'Migrated Installs': [migrated_installs_sum],
-                    'Positive': [positive_sum],
-                    'Neutral': [neutral_sum],
-                    'Negative': [negative_sum],
-                    'AI Summary': [""]
-                })
-                version_analysis = pd.concat([version_analysis, summary_row], ignore_index=True)
-                st.dataframe(version_analysis)
+            # feature_analysis = get_feature_analysis(df, client)
+            # sorted_versions = sorted(df['version_app'].unique(), reverse=True)
+            # for version_app in sorted_versions: 
+            #     st.write(f"### App Version: {version_app}")
+            #     version_analysis = feature_analysis[feature_analysis['version_app'] == version_app][
+            #         ['Feature', 'Mean App Rating', 'Fresh Installs', 'Migrated Installs', 'Positive', 'Neutral', 'Negative', 'AI Summary']
+            #     ]
+            #     fresh_installs_sum = version_analysis['Fresh Installs'].sum()
+            #     migrated_installs_sum = version_analysis['Migrated Installs'].sum()
+            #     positive_sum = version_analysis['Positive'].sum()
+            #     neutral_sum = version_analysis['Neutral'].sum()
+            #     negative_sum = version_analysis['Negative'].sum()
+            #     summary_row = pd.DataFrame({
+            #         'Feature': ['Total'],
+            #         'Mean App Rating': [""],
+            #         'Fresh Installs': [fresh_installs_sum],
+            #         'Migrated Installs': [migrated_installs_sum],
+            #         'Positive': [positive_sum],
+            #         'Neutral': [neutral_sum],
+            #         'Negative': [negative_sum],
+            #         'AI Summary': [""]
+            #     })
+            #     version_analysis = pd.concat([version_analysis, summary_row], ignore_index=True)
+            #     st.dataframe(version_analysis)
             relevant_columns = [
                             'date_ymd', 'event_timestamp_local', 'score', 'aiid', 'version_app', 'version',
                             'architecture', 'city', 'region', 'country', 'uninstall_text_feedback', 'uninstall_feedback_value'
